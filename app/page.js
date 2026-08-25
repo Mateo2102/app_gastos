@@ -136,6 +136,7 @@ export default function Home() {
 
   const [dolarBlue, setDolarBlue] = useState(0);
   const [meses, setMeses] = useState([]);
+  const [porCuenta, setPorCuenta] = useState(null);
   const [gastosFijos, setGastosFijos] = useState([]);
   const [historico, setHistorico] = useState(null);
   const [opciones, setOpciones] = useState({ bancos: [], formasPago: [], marcas: [], tipos: [], gastos: [], monedas: [] });
@@ -182,6 +183,7 @@ export default function Home() {
 
   function render(payload) {
     setMeses(payload.meses || []);
+    if (payload.porCuenta) setPorCuenta(payload.porCuenta);
     if (payload.config) {
       setCfgPiso(payload.config.piso || "");
       setSueldoSchedule(payload.config.sueldoSchedule || []);
@@ -847,6 +849,43 @@ export default function Home() {
 
         {tab === "cuotas" && (
           <div className="stack">
+            {porCuenta && porCuenta.cuentas.length > 0 && (
+              <section className="card">
+                <div className="card-head">
+                  <h2>Cuánto pago por cuenta, mes a mes</h2>
+                </div>
+                <p className="hint" style={{ margin: "0 0 16px" }}>
+                  Según las cuotas ya cargadas, a partir del mes que viene. La primera fila es lo
+                  que corresponde pagar el mes siguiente.
+                </p>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Mes</th>
+                        {porCuenta.cuentas.map((c) => <th className="num" key={c}>{c}</th>)}
+                        <th className="num">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {porCuenta.meses.map((mo, i) => (
+                        <tr key={mo.key}>
+                          <td className="strong">
+                            {mo.label}
+                            {i === 0 && <span className="badge badge-info" style={{ marginLeft: 8 }}>Próximo mes</span>}
+                          </td>
+                          {porCuenta.cuentas.map((c) => (
+                            <td className="num" key={c}>{mo.cuentas[c] ? fmt(mo.cuentas[c]) : <span className="muted">—</span>}</td>
+                          ))}
+                          <td className="num strong">{fmt(mo.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
             <section className="card">
               <div className="card-head-row">
                 <h2>Cuotas activas en el mes</h2>
