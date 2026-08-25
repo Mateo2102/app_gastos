@@ -2,11 +2,11 @@
 html, body { padding: 0; margin: 0; }
 
 :root {
-  --red: #ec0000;
-  --red-dark: #af0000;
-  --red-darker: #7a0000;
-  --red-soft: #fdeaea;
-  --red-soft-2: #fbd6d6;
+  --red: #7a0c2e;
+  --red-dark: #55081f;
+  --red-darker: #350513;
+  --red-soft: #f6e8ec;
+  --red-soft-2: #eccbd3;
 
   --bg: #f1f1f4;
   --surface: #ffffff;
@@ -46,7 +46,7 @@ body {
   z-index: 20;
   background: linear-gradient(135deg, var(--red) 0%, var(--red-dark) 65%, var(--red-darker) 100%);
   padding-bottom: 0;
-  box-shadow: 0 4px 16px rgba(175, 0, 0, 0.18);
+  box-shadow: 0 4px 16px rgba(85, 8, 31, 0.25);
 }
 
 .topbar-inner {
@@ -447,3 +447,21 @@ tbody tr:hover { background: var(--surface-alt); }
   margin: 22px 0 10px;
 }
 .subsection-title:first-child { margin-top: 0; }
+
+.pago-fields {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px 4px;
+  margin-top: 14px;
+  background: var(--surface-alt);
+}
+
+.banco-tile {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  flex: 0 0 auto;
+}

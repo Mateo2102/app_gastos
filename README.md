@@ -68,3 +68,24 @@ Abrí http://localhost:3000
 - `lib/data.js`: lectura/escritura de la planilla vía Google Sheets API.
 - `lib/sheetsClient.js`: cliente autenticado + el almacén clave/valor en la pestaña
   `ConfigTablero` (reemplaza `PropertiesService`).
+
+## Columnas de la planilla
+
+Las columnas A-J son las originales de la planilla (Gasto, Tipo, Medio de pago, Descripcion,
+Fecha de compra, Cantidad de cuotas, Moneda, Monto, Total, Estado) y no se tocan. Se agregaron
+al final, sin mover nada existente:
+
+- **K — Forma de pago**: `Tarjeta de Crédito` / `Transferencia` / `Efectivo`.
+- **L — Banco** (opcional): `Santander` / `ICBC` / `MercadoPago`.
+- **M — Marca** (solo si es tarjeta): `VISA` / `AMEX` / `MASTERCARD`.
+- **N — Fecha de cierre** (opcional, solo tarjeta): si se carga, las cuotas de esa compra se
+  calculan a partir de esa fecha exacta en vez de inferir el jueves de cierre desde la tabla
+  Tarjeta/Cierre de la hoja — evita discrepancias con el resumen real del banco.
+
+La columna C (`Medio de pago`) se sigue completando automáticamente (ej. "VISA Santander") para
+que la fórmula de `Estado` siga funcionando sin cambios y la planilla se siga leyendo bien a
+simple vista.
+
+Las compras que NO son con tarjeta de crédito (Transferencia/Efectivo, como préstamos) no pasan
+por el ciclo de cierre de ninguna tarjeta: sus cuotas arrancan directamente en el mes de la
+compra. En el tablero aparecen agrupadas en "El Banco", separadas de "Tarjetas".
