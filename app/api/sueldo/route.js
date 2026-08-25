@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
-import { guardarPiso } from '@/lib/logic';
+import { agregarTramoSueldo } from '@/lib/logic';
 import { getDashboardData } from '@/lib/dashboard';
 
 export async function POST(req) {
   try {
     const body = await req.json();
-    await guardarPiso(body.piso);
+    await agregarTramoSueldo({ year: Number(body.year), month: Number(body.month), monto: body.monto });
     const data = await getDashboardData();
     return NextResponse.json(data);
   } catch (e) {

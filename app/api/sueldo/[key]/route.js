@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
-import { guardarPiso } from '@/lib/logic';
+import { eliminarTramoSueldo } from '@/lib/logic';
 import { getDashboardData } from '@/lib/dashboard';
 
-export async function POST(req) {
+export async function DELETE(req, { params }) {
   try {
-    const body = await req.json();
-    await guardarPiso(body.piso);
+    const { key } = await params;
+    await eliminarTramoSueldo(decodeURIComponent(key));
     const data = await getDashboardData();
     return NextResponse.json(data);
   } catch (e) {

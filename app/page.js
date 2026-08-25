@@ -42,6 +42,11 @@ function estadoBadge(estado) {
   return <span className={`badge ${cls}`}>{estado || "—"}</span>;
 }
 
+function labelTramo(key) {
+  const [y, m] = key.split("-").map(Number);
+  return `${MESES_NOMBRE[m]} ${y}`;
+}
+
 function iniciales(nombre) {
   return String(nombre || "?").trim().slice(0, 2).toUpperCase();
 }
@@ -68,9 +73,12 @@ export default function Home() {
   const [opciones, setOpciones] = useState({ tarjetas: [], tipos: [], gastos: [], monedas: [] });
   const [tarjetaActiva, setTarjetaActiva] = useState(null);
 
-  const [cfgSueldo, setCfgSueldo] = useState("");
   const [cfgPiso, setCfgPiso] = useState("");
   const [cfgStatus, setCfgStatus] = useState("");
+
+  const [sueldoSchedule, setSueldoSchedule] = useState([]);
+  const [sueldoForm, setSueldoForm] = useState({ month: hoy.getMonth(), year: hoy.getFullYear(), monto: "" });
+  const [sueldoStatus, setSueldoStatus] = useState("");
 
   const [filtroMes, setFiltroMes] = useState(hoy.getMonth());
   const [filtroAnio, setFiltroAnio] = useState(hoy.getFullYear());
@@ -95,8 +103,8 @@ export default function Home() {
     setMeses(payload.meses || []);
     setDetalle(payload.detalle || []);
     if (payload.config) {
-      setCfgSueldo(payload.config.sueldoMensual || "");
       setCfgPiso(payload.config.piso || "");
+      setSueldoSchedule(payload.config.sueldoSchedule || []);
     }
     if (payload.dolarBlue) setDolarBlue(payload.dolarBlue);
     else setDolarBlue(0);
@@ -179,13 +187,35 @@ export default function Home() {
       const payload = await fetchJSON("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sueldoMensual: cfgSueldo, piso: cfgPiso })
+        body: JSON.stringify({ piso: cfgPiso })
       });
       render(payload);
       setCfgStatus("✅ Guardado");
     } catch (e) {
       setCfgStatus("❌ " + e.message);
     }
+  }
+
+  async function agregarTramoSueldo() {
+    setSueldoStatus("Guardando...");
+    try {
+      const payload = await fetchJSON("/api/sueldo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sueldoForm)
+      });
+      render(payload);
+      setSueldoStatus("✅ Guardado");
+      setSueldoForm((f) => ({ ...f, monto: "" }));
+    } catch (e) {
+      setSueldoStatus("❌ " + e.message);
+    }
+  }
+
+  async function eliminarTramoSueldo(key) {
+    if (!confirm("¿Eliminar este tramo de sueldo?")) return;
+    const payload = await fetchJSON(`/api/sueldo/${encodeURIComponent(key)}`, { method: "DELETE" });
+    render(payload);
   }
 
   async function verPeriodo() {
@@ -322,13 +352,9 @@ export default function Home() {
           <div className="stack">
             <section className="card">
               <div className="card-head">
-                <h2>Sueldo y piso de ahorro</h2>
+                <h2>Piso de ahorro</h2>
               </div>
               <div className="field-row">
-                <div className="field">
-                  <label>Sueldo</label>
-                  <input type="number" placeholder="0" value={cfgSueldo} onChange={(e) => setCfgSueldo(e.target.value)} />
-                </div>
                 <div className="field">
                   <label>Piso disponible (siempre libre)</label>
                   <input type="number" placeholder="300000" value={cfgPiso} onChange={(e) => setCfgPiso(e.target.value)} />
@@ -337,12 +363,62 @@ export default function Home() {
                   <button className="btn-primary" onClick={guardarConfig}>Guardar</button>
                 </div>
               </div>
-              <p className="hint">
-                Se aplica al mes corriente y a los futuros. Los meses que ya pasaron quedan congelados solos con el
-                valor que tenía este campo en ese momento. El aguinaldo (medio sueldo) se suma automáticamente en
-                junio y diciembre.
-              </p>
               {cfgStatus && <div className="status">{cfgStatus}</div>}
+            </section>
+
+            <section className="card">
+              <div className="card-head">
+                <h2>Evolución del sueldo</h2>
+              </div>
+              <p className="hint" style={{ margin: "0 0 16px" }}>
+                Cargá desde qué mes rige cada sueldo — por ejemplo, &ldquo;desde septiembre $X&rdquo; y &ldquo;desde
+                diciembre $Y&rdquo; para un aumento ya sabido. El tablero usa el tramo vigente en cada mes de la
+                proyección, y
+                el aguinaldo (medio sueldo) se suma solo en junio y diciembre. Queda guardado en la planilla, no en
+                el navegador, así que no se pierde.
+              </p>
+
+              {sueldoSchedule.length > 0 && (
+                <div className="table-scroll" style={{ marginBottom: 16 }}>
+                  <table>
+                    <thead>
+                      <tr><th>Vigente desde</th><th className="num">Sueldo</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {sueldoSchedule.map((t) => (
+                        <tr key={t.key}>
+                          <td className="strong">{labelTramo(t.key)}</td>
+                          <td className="num">{fmt(t.monto)}</td>
+                          <td className="col-action">
+                            <button className="btn-danger-ghost" onClick={() => eliminarTramoSueldo(t.key)}>Eliminar</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="field-row">
+                <div className="field">
+                  <label>Vigente desde (mes)</label>
+                  <select value={sueldoForm.month} onChange={(e) => setSueldoForm({ ...sueldoForm, month: Number(e.target.value) })}>
+                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Año</label>
+                  <input type="number" value={sueldoForm.year} onChange={(e) => setSueldoForm({ ...sueldoForm, year: Number(e.target.value) })} />
+                </div>
+                <div className="field">
+                  <label>Monto del sueldo</label>
+                  <input type="number" placeholder="0" value={sueldoForm.monto} onChange={(e) => setSueldoForm({ ...sueldoForm, monto: e.target.value })} />
+                </div>
+                <div className="field field-action">
+                  <button className="btn-primary" onClick={agregarTramoSueldo}>Agregar tramo</button>
+                </div>
+              </div>
+              {sueldoStatus && <div className="status">{sueldoStatus}</div>}
             </section>
 
             <section className="card">
