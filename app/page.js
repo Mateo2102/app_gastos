@@ -1,11 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
 
 const MESES_NOMBRE = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+];
+
+const TABS = [
+  { id: "resumen", label: "Resumen", icon: "📊" },
+  { id: "tarjetas", label: "Por tarjeta", icon: "💳" },
+  { id: "cuotas", label: "Cuotas activas", icon: "🧾" },
+  { id: "fijos", label: "Gastos fijos", icon: "📌" },
+  { id: "cargar", label: "Cargar / Simular", icon: "➕" },
+  { id: "historico", label: "Histórico", icon: "📜" }
 ];
 
 const fmt = (n) => (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString("es-AR");
@@ -19,10 +28,22 @@ function celdaEquivalencia(moneda, montoARS, montoUSD) {
   return (
     <>
       {principal}
-      <br />
-      <span className="usd">≈ {equivalente}</span>
+      <span className="usd-inline">≈ {equivalente}</span>
     </>
   );
+}
+
+function estadoBadge(estado) {
+  const s = String(estado || "").toLowerCase();
+  let cls = "badge-neutral";
+  if (s.includes("curso")) cls = "badge-info";
+  else if (s.includes("cerrado") || s.includes("fijo")) cls = "badge-ok";
+  else if (s === "n/a") cls = "badge-neutral";
+  return <span className={`badge ${cls}`}>{estado || "—"}</span>;
+}
+
+function iniciales(nombre) {
+  return String(nombre || "?").trim().slice(0, 2).toUpperCase();
 }
 
 async function fetchJSON(url, opts) {
@@ -37,12 +58,15 @@ async function fetchJSON(url, opts) {
 export default function Home() {
   const hoy = new Date();
 
+  const [tab, setTab] = useState("resumen");
+
   const [dolarBlue, setDolarBlue] = useState(0);
   const [meses, setMeses] = useState([]);
   const [detalle, setDetalle] = useState([]);
   const [gastosFijos, setGastosFijos] = useState([]);
   const [historico, setHistorico] = useState(null);
   const [opciones, setOpciones] = useState({ tarjetas: [], tipos: [], gastos: [], monedas: [] });
+  const [tarjetaActiva, setTarjetaActiva] = useState(null);
 
   const [cfgSueldo, setCfgSueldo] = useState("");
   const [cfgPiso, setCfgPiso] = useState("");
@@ -95,16 +119,25 @@ export default function Home() {
     setGastosFijos(lista);
   }
 
+  async function buscarHistorico(desde = histDesde, hasta = histHasta) {
+    const params = new URLSearchParams();
+    if (desde) params.set("desde", desde);
+    if (hasta) params.set("hasta", hasta);
+    const lista = await fetchJSON(`/api/historico?${params.toString()}`);
+    setHistorico(lista);
+  }
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial de datos vía fetch
     cargarOpciones();
     cargarTablero();
     cargarGastosFijos();
+    buscarHistorico("", "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || tab !== "resumen") return;
     const labels = meses.map((m) => m.label);
     const ingresos = meses.map((m) => m.ingresos);
     const gastos = meses.map((m) => m.gastos);
@@ -116,9 +149,9 @@ export default function Home() {
       data: {
         labels,
         datasets: [
-          { type: "bar", label: "Ingresos", data: ingresos, backgroundColor: "#34a853", borderRadius: 4, barPercentage: 0.7 },
-          { type: "bar", label: "Gastos", data: gastos, backgroundColor: "#ea4335", borderRadius: 4, barPercentage: 0.7 },
-          { type: "line", label: "Ahorro proyectado", data: ahorro, borderColor: "#1a73e8", backgroundColor: "#1a73e8", tension: 0.35, borderWidth: 3, pointRadius: 4, pointBackgroundColor: "#1a73e8" }
+          { type: "bar", label: "Ingresos", data: ingresos, backgroundColor: "#22c55e", borderRadius: 6, barPercentage: 0.6 },
+          { type: "bar", label: "Gastos", data: gastos, backgroundColor: "#f43f5e", borderRadius: 6, barPercentage: 0.6 },
+          { type: "line", label: "Ahorro proyectado", data: ahorro, borderColor: "#3b82f6", backgroundColor: "#3b82f6", tension: 0.35, borderWidth: 3, pointRadius: 4, pointBackgroundColor: "#3b82f6" }
         ]
       },
       options: {
@@ -126,19 +159,19 @@ export default function Home() {
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         plugins: {
-          legend: { position: "top", labels: { font: { size: 13 }, usePointStyle: true, padding: 16 } },
+          legend: { position: "top", labels: { font: { size: 13, family: "inherit" }, usePointStyle: true, padding: 18, boxHeight: 8 } },
           tooltip: {
-            padding: 10, titleFont: { size: 13 }, bodyFont: { size: 13 },
+            padding: 12, cornerRadius: 8, titleFont: { size: 13, family: "inherit" }, bodyFont: { size: 13, family: "inherit" },
             callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` }
           }
         },
         scales: {
-          x: { grid: { display: false }, ticks: { font: { size: 12 } } },
-          y: { grid: { color: "#f1f3f4" }, ticks: { font: { size: 12 }, callback: (v) => fmtCorto(v) } }
+          x: { grid: { display: false }, ticks: { font: { size: 12, family: "inherit" } } },
+          y: { grid: { color: "#eef0f4" }, border: { display: false }, ticks: { font: { size: 12, family: "inherit" }, callback: (v) => fmtCorto(v) } }
         }
       }
     });
-  }, [meses]);
+  }, [meses, tab]);
 
   async function guardarConfig() {
     setCfgStatus("Guardando...");
@@ -207,6 +240,7 @@ export default function Home() {
       render(res.dashboard);
       setGastosFijos(res.gastosFijos);
       setSimStatus("✅ Gasto guardado en la planilla");
+      buscarHistorico();
     } catch (e) {
       setSimStatus("❌ " + e.message);
     }
@@ -224,6 +258,7 @@ export default function Home() {
       setGastosFijos(res.gastosFijos);
       setAddStatus("✅ Agregado");
       setGForm((f) => ({ ...f, desc: "", monto: "" }));
+      buscarHistorico();
     } catch (e) {
       setAddStatus("❌ " + e.message);
     }
@@ -234,119 +269,207 @@ export default function Home() {
     const res = await fetchJSON(`/api/gastos/${row}`, { method: "DELETE" });
     render(res.dashboard);
     setGastosFijos(res.gastosFijos);
+    buscarHistorico();
   }
 
-  async function buscarHistorico() {
-    const params = new URLSearchParams();
-    if (histDesde) params.set("desde", histDesde);
-    if (histHasta) params.set("hasta", histHasta);
-    const lista = await fetchJSON(`/api/historico?${params.toString()}`);
-    setHistorico(lista);
-  }
+  // Agrupa el histórico (ya traído del server, sin tocar la lógica) por medio de pago.
+  const porTarjeta = useMemo(() => {
+    if (!historico) return [];
+    const grupos = new Map();
+    historico.forEach((h) => {
+      const key = h.medio || "Sin especificar";
+      if (!grupos.has(key)) grupos.set(key, { medio: key, gastos: [], totalARS: 0, totalUSD: 0 });
+      const g = grupos.get(key);
+      g.gastos.push(h);
+      g.totalARS += Number(h.montoARS) || 0;
+      g.totalUSD += Number(h.montoUSD) || 0;
+    });
+    return [...grupos.values()].sort((a, b) => b.totalARS - a.totalARS);
+  }, [historico]);
+
+  const grupoActivo = porTarjeta.find((g) => g.medio === tarjetaActiva) || porTarjeta[0] || null;
 
   return (
-    <div className="wrap">
-      <h1>💰 Tablero de Control de Gastos</h1>
-      <div className="dolarInfo">
-        {dolarBlue ? <>Dólar blue: <b>{fmt(dolarBlue)}</b></> : "Dólar blue: no disponible en este momento"}
-      </div>
-
-      <div className="card">
-        <h2>⚙️ Sueldo y piso de ahorro</h2>
-        <div className="cfg-row">
-          <div>
-            <label>Sueldo</label>
-            <input type="number" placeholder="0" value={cfgSueldo} onChange={(e) => setCfgSueldo(e.target.value)} />
-          </div>
-          <div>
-            <label>Piso disponible (siempre libre)</label>
-            <input type="number" placeholder="300000" value={cfgPiso} onChange={(e) => setCfgPiso(e.target.value)} />
-          </div>
-        </div>
-        <div className="hint">
-          Se aplica al mes corriente y a los futuros. Los meses que ya pasaron quedan congelados solos con el valor
-          que tenía este campo en ese momento — no hay que tocar nada. El aguinaldo (medio sueldo) se suma
-          automáticamente en junio y diciembre.
-        </div>
-        <button className="btn-primary" onClick={guardarConfig}>Guardar</button>
-        <div className="status">{cfgStatus}</div>
-      </div>
-
-      <div className="card">
-        <h2>📅 Ver otro período</h2>
-        <div className="filtro-row">
-          <div>
-            <label>Mes</label>
-            <select value={filtroMes} onChange={(e) => setFiltroMes(Number(e.target.value))}>
-              {MESES_NOMBRE.map((m, i) => (
-                <option key={i} value={i}>{m}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label>Año</label>
-            <input type="number" value={filtroAnio} onChange={(e) => setFiltroAnio(Number(e.target.value))} />
-          </div>
-          <div>
-            <button className="btn-secondary" onClick={verPeriodo}>Ver</button>
-          </div>
-          <div>
-            <button className="btn-secondary" onClick={verHoy}>Volver a hoy</button>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid">
-        <div>
-          <div className="card chart-card">
-            <canvas ref={canvasRef}></canvas>
-          </div>
-
-          <div className="card">
-            <h2>Proyección mes a mes</h2>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr><th>Mes</th><th>Ingresos</th><th>Gastos</th><th>Piso</th><th>Ahorro proyectado</th></tr>
-                </thead>
-                <tbody>
-                  {meses.map((mo) => (
-                    <tr key={mo.key}>
-                      <td>{mo.label}</td>
-                      <td className="pos">
-                        {fmt(mo.ingresos)}
-                        {mo.aguinaldo > 0 && <><br /><span className="usd">incl. aguinaldo {fmt(mo.aguinaldo)}</span></>}
-                        {mo.ingresoExtra > 0 && <><br /><span className="usd">incl. extra {fmt(mo.ingresoExtra)}</span></>}
-                      </td>
-                      <td className="neg">{fmt(mo.gastos)}</td>
-                      <td>{fmt(mo.piso)}</td>
-                      <td className={mo.ahorroProyectado >= 0 ? "pos" : "neg"}>{fmt(mo.ahorroProyectado)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="topbar-inner">
+          <div className="brand">
+            <span className="brand-icon">💰</span>
+            <div>
+              <h1>Tablero de Gastos</h1>
+              <div className="dolarInfo">
+                {dolarBlue ? <>Dólar blue <b>{fmt(dolarBlue)}</b></> : "Dólar blue no disponible"}
+              </div>
             </div>
           </div>
+        </div>
+        <nav className="tabnav">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`tabbtn ${tab === t.id ? "active" : ""}`}
+              onClick={() => setTab(t.id)}
+            >
+              <span className="tabbtn-icon">{t.icon}</span>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      </header>
 
-          <div className="card">
-            <h2>Compras en cuotas activas</h2>
+      <main className="content">
+        {tab === "resumen" && (
+          <div className="stack">
+            <section className="card">
+              <div className="card-head">
+                <h2>Sueldo y piso de ahorro</h2>
+              </div>
+              <div className="field-row">
+                <div className="field">
+                  <label>Sueldo</label>
+                  <input type="number" placeholder="0" value={cfgSueldo} onChange={(e) => setCfgSueldo(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>Piso disponible (siempre libre)</label>
+                  <input type="number" placeholder="300000" value={cfgPiso} onChange={(e) => setCfgPiso(e.target.value)} />
+                </div>
+                <div className="field field-action">
+                  <button className="btn-primary" onClick={guardarConfig}>Guardar</button>
+                </div>
+              </div>
+              <p className="hint">
+                Se aplica al mes corriente y a los futuros. Los meses que ya pasaron quedan congelados solos con el
+                valor que tenía este campo en ese momento. El aguinaldo (medio sueldo) se suma automáticamente en
+                junio y diciembre.
+              </p>
+              {cfgStatus && <div className="status">{cfgStatus}</div>}
+            </section>
+
+            <section className="card">
+              <div className="card-head-row">
+                <h2>Proyección</h2>
+                <div className="filtro-inline">
+                  <select value={filtroMes} onChange={(e) => setFiltroMes(Number(e.target.value))}>
+                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                  </select>
+                  <input type="number" className="anio-input" value={filtroAnio} onChange={(e) => setFiltroAnio(Number(e.target.value))} />
+                  <button className="btn-secondary" onClick={verPeriodo}>Ver</button>
+                  <button className="btn-ghost" onClick={verHoy}>Hoy</button>
+                </div>
+              </div>
+
+              <div className="chart-box">
+                <canvas ref={canvasRef}></canvas>
+              </div>
+
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr><th>Mes</th><th className="num">Ingresos</th><th className="num">Gastos</th><th className="num">Piso</th><th className="num">Ahorro proyectado</th></tr>
+                  </thead>
+                  <tbody>
+                    {meses.map((mo) => (
+                      <tr key={mo.key}>
+                        <td className="strong">{mo.label}</td>
+                        <td className="num pos">
+                          {fmt(mo.ingresos)}
+                          {mo.aguinaldo > 0 && <div className="subnote">incl. aguinaldo {fmt(mo.aguinaldo)}</div>}
+                          {mo.ingresoExtra > 0 && <div className="subnote">incl. extra {fmt(mo.ingresoExtra)}</div>}
+                        </td>
+                        <td className="num neg">{fmt(mo.gastos)}</td>
+                        <td className="num muted">{fmt(mo.piso)}</td>
+                        <td className={`num strong ${mo.ahorroProyectado >= 0 ? "pos" : "neg"}`}>{fmt(mo.ahorroProyectado)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {tab === "tarjetas" && (
+          <div className="cardgrid-layout">
+            <aside className="tarjeta-list">
+              {porTarjeta.length === 0 && <div className="empty-hint">Todavía no hay gastos cargados.</div>}
+              {porTarjeta.map((g) => (
+                <button
+                  key={g.medio}
+                  className={`tarjeta-pill ${grupoActivo?.medio === g.medio ? "active" : ""}`}
+                  onClick={() => setTarjetaActiva(g.medio)}
+                >
+                  <span className="tarjeta-avatar">{iniciales(g.medio)}</span>
+                  <span className="tarjeta-pill-info">
+                    <span className="tarjeta-pill-nombre">{g.medio}</span>
+                    <span className="tarjeta-pill-total">{fmt(g.totalARS)} · {g.gastos.length} gastos</span>
+                  </span>
+                </button>
+              ))}
+            </aside>
+
+            <section className="card tarjeta-detalle">
+              {!grupoActivo ? (
+                <div className="empty-hint">Elegí una tarjeta para ver el detalle.</div>
+              ) : (
+                <>
+                  <div className="card-head-row">
+                    <h2>{grupoActivo.medio}</h2>
+                    <div className="tarjeta-totales">
+                      <span className="badge badge-total">{fmt(grupoActivo.totalARS)}</span>
+                      {grupoActivo.totalUSD > 0 && <span className="badge badge-neutral">≈ {fmtUSD(grupoActivo.totalUSD)}</span>}
+                    </div>
+                  </div>
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Fecha</th><th>Descripción</th><th>Tipo</th><th>Categoría</th>
+                          <th>Cuotas</th><th className="num">Monto</th><th>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {grupoActivo.gastos.map((h) => (
+                          <tr key={h.row}>
+                            <td className="muted">{h.fecha}</td>
+                            <td className="strong">{h.desc}</td>
+                            <td>{h.tipo}</td>
+                            <td>{h.gasto}</td>
+                            <td>{h.cuotas}</td>
+                            <td className="num">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</td>
+                            <td>{estadoBadge(h.estado)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
+        )}
+
+        {tab === "cuotas" && (
+          <section className="card">
+            <div className="card-head">
+              <h2>Compras en cuotas activas</h2>
+            </div>
             <div className="table-scroll">
               <table>
                 {detalle.length === 0 ? (
-                  <tbody><tr><td>No hay compras en cuotas activas.</td></tr></tbody>
+                  <tbody><tr><td className="empty-hint">No hay compras en cuotas activas.</td></tr></tbody>
                 ) : (
                   <>
                     <thead>
-                      <tr><th>Descripción</th><th>Medio</th><th>Monto/cuota</th><th>Cuotas</th><th>Restantes</th></tr>
+                      <tr><th>Descripción</th><th>Medio</th><th className="num">Monto/cuota</th><th>Cuotas</th><th>Restantes</th></tr>
                     </thead>
                     <tbody>
                       {detalle.map((d, i) => (
                         <tr key={i}>
-                          <td>{d.desc}</td>
+                          <td className="strong">{d.desc}</td>
                           <td>{d.medio}</td>
-                          <td>{celdaEquivalencia(d.moneda, d.montoCuotaARS, d.montoCuotaUSD)}</td>
+                          <td className="num">{celdaEquivalencia(d.moneda, d.montoCuotaARS, d.montoCuotaUSD)}</td>
                           <td>{d.cuotasTotales}</td>
-                          <td>{d.cuotasRestantes}</td>
+                          <td><span className="badge badge-info">{d.cuotasRestantes} restantes</span></td>
                         </tr>
                       ))}
                     </tbody>
@@ -354,27 +477,31 @@ export default function Home() {
                 )}
               </table>
             </div>
-          </div>
+          </section>
+        )}
 
-          <div className="card">
-            <h2>📌 Gastos fijos</h2>
+        {tab === "fijos" && (
+          <section className="card">
+            <div className="card-head">
+              <h2>Gastos fijos</h2>
+            </div>
             <div className="table-scroll">
               <table>
                 {gastosFijos.length === 0 ? (
-                  <tbody><tr><td>No tenés gastos fijos cargados.</td></tr></tbody>
+                  <tbody><tr><td className="empty-hint">No tenés gastos fijos cargados.</td></tr></tbody>
                 ) : (
                   <>
                     <thead>
-                      <tr><th>Descripción</th><th>Tipo</th><th>Medio</th><th>Monto</th><th></th></tr>
+                      <tr><th>Descripción</th><th>Tipo</th><th>Medio</th><th className="num">Monto</th><th></th></tr>
                     </thead>
                     <tbody>
                       {gastosFijos.map((g) => (
                         <tr key={g.row}>
-                          <td>{g.desc}</td>
+                          <td className="strong">{g.desc}</td>
                           <td>{g.tipo}</td>
                           <td>{g.medio}</td>
-                          <td>{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</td>
-                          <td><button className="btn-secondary btn-row" onClick={() => eliminarFijo(g.row)}>Eliminar</button></td>
+                          <td className="num">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</td>
+                          <td className="col-action"><button className="btn-danger-ghost" onClick={() => eliminarFijo(g.row)}>Eliminar</button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -382,46 +509,105 @@ export default function Home() {
                 )}
               </table>
             </div>
-          </div>
+          </section>
+        )}
 
-          <div className="card">
-            <h2>📜 Histórico</h2>
-            <div className="filtro-row">
-              <div>
-                <label>Desde</label>
+        {tab === "cargar" && (
+          <div className="two-col">
+            <section className="card">
+              <div className="card-head">
+                <h2>➕ Cargar gasto / ingreso extra</h2>
+              </div>
+              <label>Categoría</label>
+              <select value={gForm.gasto} onChange={(e) => setGForm({ ...gForm, gasto: e.target.value })}>
+                {opciones.gastos.map((v) => <option key={v}>{v}</option>)}
+              </select>
+              <label>Tipo</label>
+              <select value={gForm.tipo} onChange={(e) => setGForm({ ...gForm, tipo: e.target.value })}>
+                {opciones.tipos.map((v) => <option key={v}>{v}</option>)}
+              </select>
+              <label>Medio de pago</label>
+              <select value={gForm.medio} onChange={(e) => setGForm({ ...gForm, medio: e.target.value })}>
+                {opciones.tarjetas.map((v) => <option key={v}>{v}</option>)}
+              </select>
+              <label>Descripción</label>
+              <input placeholder="Ej: Zapatillas" value={gForm.desc} onChange={(e) => setGForm({ ...gForm, desc: e.target.value })} />
+              <label>Fecha de compra / del ingreso</label>
+              <input type="date" value={gForm.fecha} onChange={(e) => setGForm({ ...gForm, fecha: e.target.value })} />
+              <label>Cantidad de cuotas</label>
+              <input type="number" min="1" value={gForm.cuotas} onChange={(e) => setGForm({ ...gForm, cuotas: e.target.value })} />
+              <label>Moneda</label>
+              <select value={gForm.moneda} onChange={(e) => setGForm({ ...gForm, moneda: e.target.value })}>
+                {opciones.monedas.map((v) => <option key={v}>{v}</option>)}
+              </select>
+              <label>Monto por cuota / monto del ingreso</label>
+              <input type="number" placeholder="0" value={gForm.monto} onChange={(e) => setGForm({ ...gForm, monto: e.target.value })} />
+              <button className="btn-primary" onClick={agregar}>Agregar a la planilla</button>
+              {addStatus && <div className="status">{addStatus}</div>}
+            </section>
+
+            <section className="card">
+              <div className="card-head">
+                <h2>🧪 Simular compra (sin guardar)</h2>
+              </div>
+              <label>Medio de pago</label>
+              <select value={simForm.medio} onChange={(e) => setSimForm({ ...simForm, medio: e.target.value })}>
+                {opciones.tarjetas.map((v) => <option key={v}>{v}</option>)}
+              </select>
+              <label>Moneda</label>
+              <select value={simForm.moneda} onChange={(e) => setSimForm({ ...simForm, moneda: e.target.value })}>
+                {opciones.monedas.map((v) => <option key={v}>{v}</option>)}
+              </select>
+              <label>Monto por cuota</label>
+              <input type="number" placeholder="0" value={simForm.monto} onChange={(e) => setSimForm({ ...simForm, monto: e.target.value })} />
+              <label>Cantidad de cuotas</label>
+              <input type="number" min="1" value={simForm.cuotas} onChange={(e) => setSimForm({ ...simForm, cuotas: e.target.value })} />
+              <label>Fecha de compra</label>
+              <input type="date" value={simForm.fecha} onChange={(e) => setSimForm({ ...simForm, fecha: e.target.value })} />
+              <div className="btn-pair">
+                <button className="btn-secondary" onClick={simular}>Simular impacto</button>
+                <button className="btn-primary" onClick={guardarSimulacion}>Guardar esta compra</button>
+              </div>
+              {simStatus && <div className="status">{simStatus}</div>}
+            </section>
+          </div>
+        )}
+
+        {tab === "historico" && (
+          <section className="card">
+            <div className="card-head-row">
+              <h2>Histórico completo</h2>
+              <div className="filtro-inline">
                 <input type="date" value={histDesde} onChange={(e) => setHistDesde(e.target.value)} />
-              </div>
-              <div>
-                <label>Hasta</label>
+                <span className="filtro-sep">a</span>
                 <input type="date" value={histHasta} onChange={(e) => setHistHasta(e.target.value)} />
-              </div>
-              <div>
-                <button className="btn-secondary" onClick={buscarHistorico}>Buscar</button>
+                <button className="btn-secondary" onClick={() => buscarHistorico()}>Buscar</button>
+                <button className="btn-ghost" onClick={() => { setHistDesde(""); setHistHasta(""); buscarHistorico("", ""); }}>Todo</button>
               </div>
             </div>
             <div className="table-scroll">
-              <table style={{ marginTop: 10 }}>
+              <table>
                 {historico === null ? null : historico.length === 0 ? (
-                  <tbody><tr><td>Sin resultados en ese rango.</td></tr></tbody>
+                  <tbody><tr><td className="empty-hint">Sin resultados en ese rango.</td></tr></tbody>
                 ) : (
                   <>
                     <thead>
                       <tr>
                         <th>Fecha</th><th>Gasto</th><th>Tipo</th><th>Medio</th><th>Descripción</th>
-                        <th>Cuotas</th><th>Monto</th><th>Estado</th>
+                        <th>Cuotas</th><th className="num">Monto</th><th>Estado</th>
                       </tr>
                     </thead>
                     <tbody>
                       {historico.map((h) => (
                         <tr key={h.row}>
-                          <td>{h.fecha}</td>
+                          <td className="muted">{h.fecha}</td>
                           <td>{h.gasto}</td>
                           <td>{h.tipo}</td>
                           <td>{h.medio}</td>
-                          <td>{h.desc}</td>
+                          <td className="strong">{h.desc}</td>
                           <td>{h.cuotas}</td>
-                          <td>{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</td>
-                          <td>{h.estado}</td>
+                          <td className="num">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</td>
+                          <td>{estadoBadge(h.estado)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -429,62 +615,9 @@ export default function Home() {
                 )}
               </table>
             </div>
-          </div>
-        </div>
-
-        <div>
-          <div className="card">
-            <h2>➕ Cargar gasto / ingreso extra</h2>
-            <label>Categoría</label>
-            <select value={gForm.gasto} onChange={(e) => setGForm({ ...gForm, gasto: e.target.value })}>
-              {opciones.gastos.map((v) => <option key={v}>{v}</option>)}
-            </select>
-            <label>Tipo</label>
-            <select value={gForm.tipo} onChange={(e) => setGForm({ ...gForm, tipo: e.target.value })}>
-              {opciones.tipos.map((v) => <option key={v}>{v}</option>)}
-            </select>
-            <label>Medio de pago</label>
-            <select value={gForm.medio} onChange={(e) => setGForm({ ...gForm, medio: e.target.value })}>
-              {opciones.tarjetas.map((v) => <option key={v}>{v}</option>)}
-            </select>
-            <label>Descripción</label>
-            <input placeholder="Ej: Zapatillas" value={gForm.desc} onChange={(e) => setGForm({ ...gForm, desc: e.target.value })} />
-            <label>Fecha de compra / del ingreso</label>
-            <input type="date" value={gForm.fecha} onChange={(e) => setGForm({ ...gForm, fecha: e.target.value })} />
-            <label>Cantidad de cuotas</label>
-            <input type="number" min="1" value={gForm.cuotas} onChange={(e) => setGForm({ ...gForm, cuotas: e.target.value })} />
-            <label>Moneda</label>
-            <select value={gForm.moneda} onChange={(e) => setGForm({ ...gForm, moneda: e.target.value })}>
-              {opciones.monedas.map((v) => <option key={v}>{v}</option>)}
-            </select>
-            <label>Monto por cuota / monto del ingreso</label>
-            <input type="number" placeholder="0" value={gForm.monto} onChange={(e) => setGForm({ ...gForm, monto: e.target.value })} />
-            <button className="btn-primary" onClick={agregar}>Agregar a la planilla</button>
-            <div className="status">{addStatus}</div>
-          </div>
-
-          <div className="card">
-            <h2>🧪 Simular compra (sin guardar)</h2>
-            <label>Medio de pago</label>
-            <select value={simForm.medio} onChange={(e) => setSimForm({ ...simForm, medio: e.target.value })}>
-              {opciones.tarjetas.map((v) => <option key={v}>{v}</option>)}
-            </select>
-            <label>Moneda</label>
-            <select value={simForm.moneda} onChange={(e) => setSimForm({ ...simForm, moneda: e.target.value })}>
-              {opciones.monedas.map((v) => <option key={v}>{v}</option>)}
-            </select>
-            <label>Monto por cuota</label>
-            <input type="number" placeholder="0" value={simForm.monto} onChange={(e) => setSimForm({ ...simForm, monto: e.target.value })} />
-            <label>Cantidad de cuotas</label>
-            <input type="number" min="1" value={simForm.cuotas} onChange={(e) => setSimForm({ ...simForm, cuotas: e.target.value })} />
-            <label>Fecha de compra</label>
-            <input type="date" value={simForm.fecha} onChange={(e) => setSimForm({ ...simForm, fecha: e.target.value })} />
-            <button className="btn-secondary" onClick={simular}>Simular impacto</button>
-            <button className="btn-primary" onClick={guardarSimulacion}>Guardar esta compra</button>
-            <div className="status">{simStatus}</div>
-          </div>
-        </div>
-      </div>
+          </section>
+        )}
+      </main>
     </div>
   );
 }
