@@ -5,7 +5,7 @@ import { getDashboardData } from '@/lib/dashboard';
 export async function POST(req) {
   try {
     const body = await req.json();
-    await guardarAhorroReal({ year: Number(body.year), month: Number(body.month), monto: body.monto });
+    await guardarAhorroReal({ year: Number(body.year), month: Number(body.month), monto: body.monto, moneda: body.moneda });
     const data = await getDashboardData();
     return NextResponse.json(data);
   } catch (e) {
