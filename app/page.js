@@ -136,6 +136,10 @@ export default function Home() {
 
   const [dolarBlue, setDolarBlue] = useState(0);
   const [meses, setMeses] = useState([]);
+  // Copia de "meses" que NO se pisa cuando el usuario navega a otro período con "Ver otro
+  // período" — sirve para que el balance del header siempre refleje el mes real siguiente al
+  // que ya se paga (no el período que se esté mirando en la tabla de proyección).
+  const [mesesBase, setMesesBase] = useState([]);
   const [porCuenta, setPorCuenta] = useState(null);
   const [gastosFijos, setGastosFijos] = useState([]);
   const [historico, setHistorico] = useState(null);
@@ -181,8 +185,9 @@ export default function Home() {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
-  function render(payload) {
+  function render(payload, opts = {}) {
     setMeses(payload.meses || []);
+    if (!opts.anchored) setMesesBase(payload.meses || []);
     if (payload.porCuenta) setPorCuenta(payload.porCuenta);
     if (payload.config) {
       setCfgPiso(payload.config.piso || "");
@@ -352,7 +357,7 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ anchor: { month: filtroMes, year: filtroAnio } })
     });
-    render(data);
+    render(data, { anchored: true });
   }
 
   async function verHoy() {
@@ -479,7 +484,10 @@ export default function Home() {
     cargarTarjetaMes(nuevo.month, nuevo.year);
   }
 
-  const mesActualData = meses.find((m) => m.key === `${hoy.getFullYear()}-${hoy.getMonth()}`) || meses[0] || null;
+  // meses[0] es siempre el mes calendario siguiente al de hoy, el que ya se paga completo el
+  // primer día hábil (y por eso ya "no cuenta"). El que hay que tener siempre a la vista es el
+  // de después: meses[1].
+  const mesActualData = mesesBase[1] || null;
 
   return (
     <div className="app-shell">
