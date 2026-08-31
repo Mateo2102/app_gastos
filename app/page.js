@@ -131,6 +131,9 @@ function CamposPago({ form, setForm, opciones }) {
 
 export default function Home() {
   const hoy = new Date();
+  // El mes inmediato próximo ya se paga completo el primer día hábil, así que el mes "vigente"
+  // a mostrar por defecto en todas las pestañas es uno más adelante (ej. en agosto, octubre).
+  const mesObjetivo = shiftMes(hoy.getMonth(), hoy.getFullYear(), 2);
 
   const [tab, setTab] = useState("resumen");
 
@@ -150,15 +153,15 @@ export default function Home() {
   const [cfgStatus, setCfgStatus] = useState("");
 
   const [sueldoSchedule, setSueldoSchedule] = useState([]);
-  const [sueldoForm, setSueldoForm] = useState({ month: hoy.getMonth(), year: hoy.getFullYear(), monto: "" });
+  const [sueldoForm, setSueldoForm] = useState({ month: mesObjetivo.month, year: mesObjetivo.year, monto: "" });
   const [sueldoStatus, setSueldoStatus] = useState("");
 
   const [ahorroReal, setAhorroReal] = useState({});
-  const [ahorroForm, setAhorroForm] = useState({ month: hoy.getMonth(), year: hoy.getFullYear(), monto: "", moneda: "ARS" });
+  const [ahorroForm, setAhorroForm] = useState({ month: mesObjetivo.month, year: mesObjetivo.year, monto: "", moneda: "ARS" });
   const [ahorroStatus, setAhorroStatus] = useState("");
 
-  const [filtroMes, setFiltroMes] = useState(hoy.getMonth());
-  const [filtroAnio, setFiltroAnio] = useState(hoy.getFullYear());
+  const [filtroMes, setFiltroMes] = useState(mesObjetivo.month);
+  const [filtroAnio, setFiltroAnio] = useState(mesObjetivo.year);
 
   const pagoInicial = { formaPago: FORMA_TARJETA, banco: "", marca: "VISA", fechaCierre: "" };
 
@@ -175,18 +178,18 @@ export default function Home() {
   const [histDesde, setHistDesde] = useState("");
   const [histHasta, setHistHasta] = useState("");
 
-  const [cuotasMesFiltro, setCuotasMesFiltro] = useState({ month: hoy.getMonth(), year: hoy.getFullYear() });
+  const [cuotasMesFiltro, setCuotasMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
   const [cuotasMes, setCuotasMes] = useState(null);
 
   // Navegador de meses independiente para el detalle de una tarjeta puntual (estilo Mercado Pago).
-  const [tarjetaMesFiltro, setTarjetaMesFiltro] = useState({ month: hoy.getMonth(), year: hoy.getFullYear() });
+  const [tarjetaMesFiltro, setTarjetaMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
   const [tarjetaMesCuotas, setTarjetaMesCuotas] = useState(null);
 
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
   function render(payload, opts = {}) {
-    setMeses(payload.meses || []);
+    if (!opts.onlyBase) setMeses(payload.meses || []);
     if (!opts.anchored) setMesesBase(payload.meses || []);
     if (payload.porCuenta) setPorCuenta(payload.porCuenta);
     if (payload.config) {
@@ -200,7 +203,7 @@ export default function Home() {
 
   async function cargarTablero() {
     const data = await fetchJSON("/api/dashboard");
-    render(data);
+    render(data, { onlyBase: true });
   }
 
   async function cargarOpciones() {
@@ -241,7 +244,8 @@ export default function Home() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial de datos vía fetch
     cargarOpciones();
-    cargarTablero();
+    cargarTablero(); // fija mesesBase (siempre relativo a hoy, para el header y por-cuenta)
+    verPeriodo(mesObjetivo.month, mesObjetivo.year); // la tabla/gráfico arrancan en el mes de referencia
     cargarGastosFijos();
     buscarHistorico("", "");
     cargarCuotasMes();
@@ -351,20 +355,20 @@ export default function Home() {
     render(payload);
   }
 
-  async function verPeriodo() {
+  async function verPeriodo(month = filtroMes, year = filtroAnio) {
     const data = await fetchJSON("/api/dashboard", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ anchor: { month: filtroMes, year: filtroAnio } })
+      body: JSON.stringify({ anchor: { month, year } })
     });
     render(data, { anchored: true });
   }
 
+  // "Hoy" vuelve al mes de referencia (el que ya no está resuelto), no al mes calendario real.
   async function verHoy() {
-    const h = new Date();
-    setFiltroMes(h.getMonth());
-    setFiltroAnio(h.getFullYear());
-    await cargarTablero();
+    setFiltroMes(mesObjetivo.month);
+    setFiltroAnio(mesObjetivo.year);
+    await verPeriodo(mesObjetivo.month, mesObjetivo.year);
   }
 
   async function simular() {
@@ -919,7 +923,7 @@ export default function Home() {
                     onChange={(e) => setCuotasMesFiltro({ ...cuotasMesFiltro, year: Number(e.target.value) })}
                   />
                   <button className="btn-secondary" onClick={() => cargarCuotasMes()}>Ver</button>
-                  <button className="btn-ghost" onClick={() => { const h = new Date(); const f = { month: h.getMonth(), year: h.getFullYear() }; setCuotasMesFiltro(f); cargarCuotasMes(f.month, f.year); }}>Hoy</button>
+                  <button className="btn-ghost" onClick={() => { setCuotasMesFiltro(mesObjetivo); cargarCuotasMes(mesObjetivo.month, mesObjetivo.year); }}>Hoy</button>
                 </div>
               </div>
               {cuotasMes !== null && (
