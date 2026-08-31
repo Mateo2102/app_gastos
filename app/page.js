@@ -488,6 +488,9 @@ export default function Home() {
   // primer día hábil (y por eso ya "no cuenta"). El que hay que tener siempre a la vista es el
   // de después: meses[1].
   const mesActualData = mesesBase[1] || null;
+  const porCuentaMesActual = (porCuenta && mesActualData)
+    ? porCuenta.meses.find((m) => m.key === mesActualData.key) || null
+    : null;
 
   return (
     <div className="app-shell">
@@ -548,34 +551,39 @@ export default function Home() {
 
               <section className="card">
                 <div className="card-head-row">
-                  <h2>Cuotas activas este mes</h2>
-                  <button className="section-link" onClick={() => setTab("cuotas")}>Ver todo →</button>
+                  <h2>Resumen de {mesActualData ? mesActualData.label : "..."}</h2>
+                  <button className="section-link" onClick={() => setTab("cuotas")}>Ver detalle →</button>
                 </div>
-                {cuotasMes === null ? (
+                {!mesActualData ? (
                   <div className="empty-hint">Cargando...</div>
-                ) : cuotasMes.length === 0 ? (
-                  <div className="empty-hint">No hay cuotas activas este mes.</div>
                 ) : (
                   <>
-                    <div className="stat-row">
-                      <div className="stat-tile">
-                        <div className="stat-tile-label">Total del mes</div>
-                        <div className="stat-tile-value">{fmt(cuotasMesTotal)}</div>
-                        <div className="stat-tile-sub">{cuotasMes.length} cuotas activas</div>
+                    {porCuentaMesActual && Object.entries(porCuentaMesActual.cuentas).length > 0 &&
+                      Object.entries(porCuentaMesActual.cuentas)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([nombre, monto]) => (
+                          <div className="mini-tarjeta-row" key={nombre}>
+                            <div className="mini-tarjeta-left">
+                              <span className="tarjeta-avatar">{iniciales(nombre)}</span>
+                              <div className="mini-tarjeta-name">Total {nombre}</div>
+                            </div>
+                            <div className="mini-tarjeta-amount">{fmt(monto)}</div>
+                          </div>
+                        ))}
+                    <div className="mini-tarjeta-row">
+                      <div className="mini-tarjeta-name strong">Total gastos</div>
+                      <div className="mini-tarjeta-amount neg">{fmt(mesActualData.gastos)}</div>
+                    </div>
+                    <div className="mini-tarjeta-row">
+                      <div className="mini-tarjeta-name">Piso</div>
+                      <div className="mini-tarjeta-amount muted">{fmt(mesActualData.piso)}</div>
+                    </div>
+                    <div className="mini-tarjeta-row">
+                      <div className="mini-tarjeta-name strong">Restante (ahorro proyectado)</div>
+                      <div className={`mini-tarjeta-amount strong ${mesActualData.ahorroProyectado >= 0 ? "pos" : "neg"}`}>
+                        {fmt(mesActualData.ahorroProyectado)}
                       </div>
                     </div>
-                    {cuotasMesCombinado.map((g) => (
-                      <div className="mini-tarjeta-row" key={g.nombre}>
-                        <div className="mini-tarjeta-left">
-                          <span className="tarjeta-avatar">{iniciales(g.nombre)}</span>
-                          <div>
-                            <div className="mini-tarjeta-name">{g.nombre}</div>
-                            <div className="mini-tarjeta-count">{g.cuotas.length} cuotas</div>
-                          </div>
-                        </div>
-                        <div className="mini-tarjeta-amount">{fmt(g.totalARS)}</div>
-                      </div>
-                    ))}
                   </>
                 )}
               </section>
