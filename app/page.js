@@ -131,9 +131,10 @@ function CamposPago({ form, setForm, opciones }) {
 
 export default function Home() {
   const hoy = new Date();
-  // El mes inmediato próximo ya se paga completo el primer día hábil, así que el mes "vigente"
-  // a mostrar por defecto en todas las pestañas es uno más adelante (ej. en agosto, octubre).
-  const mesObjetivo = shiftMes(hoy.getMonth(), hoy.getFullYear(), 2);
+  // El mes "vigente" a mostrar por defecto en todas las pestañas es siempre el mes calendario
+  // siguiente al actual, y cambia justo el día 1 de cada mes (ej. el 08/09 se ve octubre; recién
+  // el 01/10 pasa a verse noviembre).
+  const mesObjetivo = shiftMes(hoy.getMonth(), hoy.getFullYear(), 1);
 
   const [tab, setTab] = useState("resumen");
 
@@ -488,10 +489,8 @@ export default function Home() {
     cargarTarjetaMes(nuevo.month, nuevo.year);
   }
 
-  // meses[0] es siempre el mes calendario siguiente al de hoy, el que ya se paga completo el
-  // primer día hábil (y por eso ya "no cuenta"). El que hay que tener siempre a la vista es el
-  // de después: meses[1].
-  const mesActualData = mesesBase[1] || null;
+  // mesesBase[0] es siempre el mes calendario siguiente al de hoy (mismo criterio que mesObjetivo).
+  const mesActualData = mesesBase[0] || null;
   const porCuentaMesActual = (porCuenta && mesActualData)
     ? porCuenta.meses.find((m) => m.key === mesActualData.key) || null
     : null;
