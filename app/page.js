@@ -158,7 +158,9 @@ export default function Home() {
   const [sueldoStatus, setSueldoStatus] = useState("");
 
   const [ahorroReal, setAhorroReal] = useState({});
-  const [ahorroForm, setAhorroForm] = useState({ month: mesObjetivo.month, year: mesObjetivo.year, monto: "", moneda: "ARS" });
+  // El ahorro real se carga para un mes ya transcurrido (o en curso), no para el mes de
+  // referencia futuro — por defecto el mes calendario actual, no mesObjetivo.
+  const [ahorroForm, setAhorroForm] = useState({ month: hoy.getMonth(), year: hoy.getFullYear(), monto: "", moneda: "ARS" });
   const [ahorroStatus, setAhorroStatus] = useState("");
 
   const [filtroMes, setFiltroMes] = useState(mesObjetivo.month);
@@ -600,7 +602,7 @@ export default function Home() {
                     {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
                   </select>
                   <input type="number" className="anio-input" value={filtroAnio} onChange={(e) => setFiltroAnio(Number(e.target.value))} />
-                  <button className="btn-secondary" onClick={verPeriodo}>Ver</button>
+                  <button className="btn-secondary" onClick={() => verPeriodo()}>Ver</button>
                   <button className="btn-ghost" onClick={verHoy}>Hoy</button>
                 </div>
               </div>
