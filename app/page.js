@@ -504,27 +504,44 @@ export default function Home() {
     [cuotasMes]
   );
 
-  // Cuotas del mes navegado, filtradas a la tarjeta seleccionada en la pestaña "Tarjetas".
-  const tarjetaMesCuotasFiltradas = (tarjetaMesCuotas || []).filter(
-    (c) => c.formaPago === FORMA_TARJETA && ([c.marca, c.banco].filter(Boolean).join(" ") === grupoActivo?.medio)
-  );
-  const tarjetaMesTotal = tarjetaMesCuotasFiltradas.reduce((acc, c) => acc + (Number(c.montoCuotaARS) || 0), 0);
-  const tarjetaMesTotalUSD = tarjetaMesCuotasFiltradas.reduce((acc, c) => acc + (Number(c.montoCuotaUSD) || 0), 0);
-
-  // Total de cuotas del mes navegado para CADA tarjeta (mismo criterio que "Total del mes"),
-  // para que el número de la tarjetita coincida con el detalle.
-  const totalesMesPorTarjeta = useMemo(() => {
-    const totales = {};
+  // Gastos del mes navegado de CADA tarjeta: las cuotas que caen en ese mes más los gastos
+  // fijos (suscripciones, seguros) cargados con esa tarjeta, que se repiten todos los meses.
+  const itemsMesPorTarjeta = useMemo(() => {
+    const items = {};
+    const agregar = (key, item) => {
+      if (!items[key]) items[key] = [];
+      items[key].push(item);
+    };
     (tarjetaMesCuotas || [])
       .filter((c) => c.formaPago === FORMA_TARJETA)
-      .forEach((c) => {
-        const key = [c.marca, c.banco].filter(Boolean).join(" ");
-        if (!totales[key]) totales[key] = { total: 0, cuotas: 0 };
-        totales[key].total += Number(c.montoCuotaARS) || 0;
-        totales[key].cuotas += 1;
-      });
+      .forEach((c) => agregar([c.marca, c.banco].filter(Boolean).join(" "), {
+        desc: c.desc, moneda: c.moneda, montoARS: c.montoCuotaARS, montoUSD: c.montoCuotaUSD,
+        cuota: `${c.cuotaNumero} de ${c.cuotasTotales}`
+      }));
+    gastosFijos
+      .filter((g) => g.formaPago === FORMA_TARJETA)
+      .forEach((g) => agregar([g.marca, g.banco].filter(Boolean).join(" "), {
+        desc: g.desc, moneda: g.moneda, montoARS: g.montoARS, montoUSD: g.montoUSD, cuota: "Fijo"
+      }));
+    return items;
+  }, [tarjetaMesCuotas, gastosFijos]);
+
+  const tarjetaMesItems = itemsMesPorTarjeta[grupoActivo?.medio] || [];
+  const tarjetaMesTotal = tarjetaMesItems.reduce((acc, c) => acc + (Number(c.montoARS) || 0), 0);
+  const tarjetaMesTotalUSD = tarjetaMesItems.reduce((acc, c) => acc + (Number(c.montoUSD) || 0), 0);
+
+  // Total del mes navegado para CADA tarjeta (mismo criterio que "Total del mes"), para que el
+  // número de la tarjetita coincida con el detalle.
+  const totalesMesPorTarjeta = useMemo(() => {
+    const totales = {};
+    Object.entries(itemsMesPorTarjeta).forEach(([key, lista]) => {
+      totales[key] = {
+        total: lista.reduce((acc, c) => acc + (Number(c.montoARS) || 0), 0),
+        cuotas: lista.length
+      };
+    });
     return totales;
-  }, [tarjetaMesCuotas]);
+  }, [itemsMesPorTarjeta]);
 
   // Todos los gastos del mes elegido en la pestaña "Gastos": los fijos (se repiten cada mes)
   // más las cuotas que caen en ese mes. Los ingresos extra no van acá.
@@ -895,7 +912,7 @@ export default function Home() {
                   <div className="bankcard-dots">•••• •••• •••• {iniciales(g.medio)}</div>
                   <div className="bankcard-bottom">
                     <span className="bankcard-name">
-                      {totalesMesPorTarjeta[g.medio]?.cuotas || 0} cuotas · {MESES_NOMBRE[tarjetaMesFiltro.month].slice(0, 3)}
+                      {totalesMesPorTarjeta[g.medio]?.cuotas || 0} gastos · {MESES_NOMBRE[tarjetaMesFiltro.month].slice(0, 3)}
                     </span>
                     <span className="bankcard-total">{fmt(totalesMesPorTarjeta[g.medio]?.total || 0)}</span>
                   </div>
@@ -923,20 +940,24 @@ export default function Home() {
 
                   {tarjetaMesCuotas === null ? (
                     <div className="empty-hint">Cargando...</div>
-                  ) : tarjetaMesCuotasFiltradas.length === 0 ? (
-                    <div className="empty-hint">Esta tarjeta no tiene cuotas activas en ese mes.</div>
+                  ) : tarjetaMesItems.length === 0 ? (
+                    <div className="empty-hint">Esta tarjeta no tiene gastos en ese mes.</div>
                   ) : (
                     <div className="table-scroll">
                       <table>
                         <thead>
-                          <tr><th>Descripción</th><th className="num">Monto de la cuota</th><th>Cuota</th></tr>
+                          <tr><th>Descripción</th><th className="num">Monto</th><th>Detalle</th></tr>
                         </thead>
                         <tbody>
-                          {tarjetaMesCuotasFiltradas.map((c, i) => (
+                          {tarjetaMesItems.map((c, i) => (
                             <tr key={i}>
                               <td className="strong">{c.desc}</td>
-                              <td className="num">{celdaEquivalencia(c.moneda, c.montoCuotaARS, c.montoCuotaUSD)}</td>
-                              <td><span className="badge badge-info">{c.cuotaNumero} de {c.cuotasTotales}</span></td>
+                              <td className="num">{celdaEquivalencia(c.moneda, c.montoARS, c.montoUSD)}</td>
+                              <td>
+                                <span className={`badge ${c.cuota === "Fijo" ? "badge-neutral" : "badge-info"}`}>
+                                  {c.cuota === "Fijo" ? "Fijo" : `Cuota ${c.cuota}`}
+                                </span>
+                              </td>
                             </tr>
                           ))}
                           <tr>
