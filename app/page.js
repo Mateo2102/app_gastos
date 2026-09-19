@@ -10,6 +10,7 @@ const MESES_NOMBRE = [
 
 const TABS = [
   { id: "resumen", label: "Resumen", icon: "📊" },
+  { id: "gastos", label: "Gastos", icon: "🧮" },
   { id: "sueldo", label: "Sueldo", icon: "💵" },
   { id: "ahorro", label: "Ahorro", icon: "🐷" },
   { id: "tarjetas", label: "Tarjetas", icon: "💳" },
@@ -184,6 +185,10 @@ export default function Home() {
   const [cuotasMesFiltro, setCuotasMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
   const [cuotasMes, setCuotasMes] = useState(null);
 
+  // Pestaña "Gastos": mes elegido y cuotas de ese mes (los gastos fijos se suman aparte).
+  const [gastosMesFiltro, setGastosMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
+  const [gastosMesCuotas, setGastosMesCuotas] = useState(null);
+
   // Navegador de meses independiente para el detalle de una tarjeta puntual (estilo Mercado Pago).
   const [tarjetaMesFiltro, setTarjetaMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
   const [tarjetaMesCuotas, setTarjetaMesCuotas] = useState(null);
@@ -244,10 +249,28 @@ export default function Home() {
     setTarjetaMesCuotas(payload.detalle || []);
   }
 
+  async function cargarGastosMes(month = gastosMesFiltro.month, year = gastosMesFiltro.year) {
+    const params = new URLSearchParams({ month: String(month), year: String(year) });
+    const payload = await fetchJSON(`/api/cuotas-mes?${params.toString()}`);
+    setGastosMesCuotas(payload.detalle || []);
+  }
+
+  function elegirMesGastos(month, year) {
+    setGastosMesFiltro({ month, year });
+    cargarGastosMes(month, year);
+  }
+
+  // La pestaña "Gastos" se carga recién al abrirla, para no gastar lecturas de Sheets de más.
+  function abrirTab(id) {
+    setTab(id);
+    if (id === "gastos" && gastosMesCuotas === null) cargarGastosMes();
+  }
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial de datos vía fetch
     cargarOpciones();
     cargarTablero(); // fija mesesBase (siempre relativo a hoy, para el header y por-cuenta)
+    // eslint-disable-next-line react-hooks/immutability -- el efecto corre después del render
     verPeriodo(mesObjetivo.month, mesObjetivo.year); // la tabla/gráfico arrancan en el mes de referencia
     cargarGastosFijos();
     buscarHistorico("", "");
@@ -409,6 +432,7 @@ export default function Home() {
       buscarHistorico();
       cargarCuotasMes();
       cargarTarjetaMes();
+      if (gastosMesCuotas !== null) cargarGastosMes();
     } catch (e) {
       setSimStatus("❌ " + e.message);
     }
@@ -429,6 +453,7 @@ export default function Home() {
       buscarHistorico();
       cargarCuotasMes();
       cargarTarjetaMes();
+      if (gastosMesCuotas !== null) cargarGastosMes();
     } catch (e) {
       setAddStatus("❌ " + e.message);
     }
@@ -501,6 +526,24 @@ export default function Home() {
     return totales;
   }, [tarjetaMesCuotas]);
 
+  // Todos los gastos del mes elegido en la pestaña "Gastos": los fijos (se repiten cada mes)
+  // más las cuotas que caen en ese mes. Los ingresos extra no van acá.
+  const gastosDelMes = useMemo(() => {
+    if (gastosMesCuotas === null) return null;
+    const fijos = gastosFijos.map((g) => ({
+      key: `fijo-${g.row}`, desc: g.desc, medio: g.medio, detalle: "Fijo",
+      moneda: g.moneda, montoARS: g.montoARS, montoUSD: g.montoUSD
+    }));
+    const cuotas = gastosMesCuotas.map((c, i) => ({
+      key: `cuota-${i}`, desc: c.desc, medio: c.medio, detalle: `Cuota ${c.cuotaNumero} de ${c.cuotasTotales}`,
+      moneda: c.moneda, montoARS: c.montoCuotaARS, montoUSD: c.montoCuotaUSD
+    }));
+    return [...fijos, ...cuotas].sort(
+      (a, b) => String(a.medio).localeCompare(String(b.medio)) || b.montoARS - a.montoARS
+    );
+  }, [gastosFijos, gastosMesCuotas]);
+  const gastosDelMesTotal = (gastosDelMes || []).reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0);
+
   function irMesTarjeta(delta) {
     const nuevo = shiftMes(tarjetaMesFiltro.month, tarjetaMesFiltro.year, delta);
     setTarjetaMesFiltro(nuevo);
@@ -541,7 +584,7 @@ export default function Home() {
             <button
               key={t.id}
               className={`tabbtn ${tab === t.id ? "active" : ""}`}
-              onClick={() => setTab(t.id)}
+              onClick={() => abrirTab(t.id)}
             >
               <span className="tabbtn-icon">{t.icon}</span>
               {t.label}
@@ -651,6 +694,58 @@ export default function Home() {
               </div>
             </section>
           </div>
+        )}
+
+        {tab === "gastos" && (
+          <section className="card">
+            <div className="card-head-row">
+              <h2>Gastos de {MESES_NOMBRE[gastosMesFiltro.month].toLowerCase()} {gastosMesFiltro.year}</h2>
+              <div className="filtro-inline">
+                <button className="btn-icon" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, -1); elegirMesGastos(n.month, n.year); }}>‹</button>
+                <select value={gastosMesFiltro.month} onChange={(e) => elegirMesGastos(Number(e.target.value), gastosMesFiltro.year)}>
+                  {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                </select>
+                <select value={gastosMesFiltro.year} onChange={(e) => elegirMesGastos(gastosMesFiltro.month, Number(e.target.value))}>
+                  {Array.from({ length: 7 }, (_, i) => hoy.getFullYear() - 2 + i).map((y) => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <button className="btn-icon" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, 1); elegirMesGastos(n.month, n.year); }}>›</button>
+                <button className="btn-ghost" onClick={() => elegirMesGastos(mesObjetivo.month, mesObjetivo.year)}>Hoy</button>
+              </div>
+            </div>
+
+            {gastosDelMes === null ? (
+              <div className="empty-hint">Cargando...</div>
+            ) : gastosDelMes.length === 0 ? (
+              <div className="empty-hint">No hay gastos en ese mes.</div>
+            ) : (
+              <>
+                <p className="hint" style={{ margin: "0 0 16px" }}>
+                  {gastosDelMes.length} gastos · total <span className="strong">{fmt(gastosDelMesTotal)}</span>
+                </p>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr><th>Descripción</th><th>Medio</th><th>Detalle</th><th className="num">Monto</th></tr>
+                    </thead>
+                    <tbody>
+                      {gastosDelMes.map((g) => (
+                        <tr key={g.key}>
+                          <td className="strong">{g.desc}</td>
+                          <td>{g.medio}</td>
+                          <td><span className={`badge ${g.detalle === "Fijo" ? "badge-neutral" : "badge-info"}`}>{g.detalle}</span></td>
+                          <td className="num">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td className="strong">Total</td><td></td><td></td>
+                        <td className="num strong">{fmt(gastosDelMesTotal)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
         )}
 
         {tab === "sueldo" && (
