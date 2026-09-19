@@ -484,6 +484,22 @@ export default function Home() {
     (c) => c.formaPago === FORMA_TARJETA && ([c.marca, c.banco].filter(Boolean).join(" ") === grupoActivo?.medio)
   );
   const tarjetaMesTotal = tarjetaMesCuotasFiltradas.reduce((acc, c) => acc + (Number(c.montoCuotaARS) || 0), 0);
+  const tarjetaMesTotalUSD = tarjetaMesCuotasFiltradas.reduce((acc, c) => acc + (Number(c.montoCuotaUSD) || 0), 0);
+
+  // Total de cuotas del mes navegado para CADA tarjeta (mismo criterio que "Total del mes"),
+  // para que el número de la tarjetita coincida con el detalle.
+  const totalesMesPorTarjeta = useMemo(() => {
+    const totales = {};
+    (tarjetaMesCuotas || [])
+      .filter((c) => c.formaPago === FORMA_TARJETA)
+      .forEach((c) => {
+        const key = [c.marca, c.banco].filter(Boolean).join(" ");
+        if (!totales[key]) totales[key] = { total: 0, cuotas: 0 };
+        totales[key].total += Number(c.montoCuotaARS) || 0;
+        totales[key].cuotas += 1;
+      });
+    return totales;
+  }, [tarjetaMesCuotas]);
 
   function irMesTarjeta(delta) {
     const nuevo = shiftMes(tarjetaMesFiltro.month, tarjetaMesFiltro.year, delta);
@@ -783,8 +799,10 @@ export default function Home() {
                   </div>
                   <div className="bankcard-dots">•••• •••• •••• {iniciales(g.medio)}</div>
                   <div className="bankcard-bottom">
-                    <span className="bankcard-name">{g.gastos.length} gastos</span>
-                    <span className="bankcard-total">{fmt(g.totalARS)}</span>
+                    <span className="bankcard-name">
+                      {totalesMesPorTarjeta[g.medio]?.cuotas || 0} cuotas · {MESES_NOMBRE[tarjetaMesFiltro.month].slice(0, 3)}
+                    </span>
+                    <span className="bankcard-total">{fmt(totalesMesPorTarjeta[g.medio]?.total || 0)}</span>
                   </div>
                 </div>
               ))}
@@ -796,8 +814,8 @@ export default function Home() {
                   <div className="card-head-row">
                     <h2>{grupoActivo.medio}</h2>
                     <div className="tarjeta-totales">
-                      <span className="badge badge-total">{fmt(grupoActivo.totalARS)}</span>
-                      {grupoActivo.totalUSD > 0 && <span className="badge badge-neutral">≈ {fmtUSD(grupoActivo.totalUSD)}</span>}
+                      <span className="badge badge-total">{fmt(tarjetaMesTotal)}</span>
+                      {tarjetaMesTotalUSD > 0 && <span className="badge badge-neutral">≈ {fmtUSD(tarjetaMesTotalUSD)}</span>}
                     </div>
                   </div>
 
@@ -838,7 +856,9 @@ export default function Home() {
                 </section>
 
                 <section className="card">
-                  <div className="subsection-title">Historial completo</div>
+                  <div className="subsection-title">
+                    Historial completo · {grupoActivo.gastos.length} gastos · total histórico {fmt(grupoActivo.totalARS)}
+                  </div>
                   <div className="table-scroll">
                     <table>
                       <thead>
