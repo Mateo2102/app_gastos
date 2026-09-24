@@ -465,3 +465,55 @@ tbody tr:hover { background: var(--surface-alt); }
   font-weight: 800;
   flex: 0 0 auto;
 }
+
+/* ---------- Ahorro: movimientos ---------- */
+
+.mov-list { display: flex; flex-direction: column; }
+.mov-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.mov-row:last-child { border-bottom: none; }
+.mov-fecha { font-weight: 600; }
+.mov-monto { font-weight: 700; font-variant-numeric: tabular-nums; }
+.mov-acum { font-size: 13px; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) {
+  .mov-row { grid-template-columns: 1fr auto; }
+  .mov-acum { grid-column: 1 / -1; }
+}
+
+/* ---------- Gastos: desglose por categoría ---------- */
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.chip {
+  width: auto; margin: 0; padding: 7px 14px;
+  border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface-alt); color: var(--text-muted);
+  font-size: 12.5px; font-weight: 700;
+}
+.chip:hover { background: var(--red-soft); color: var(--red-dark); }
+.chip.active { background: var(--red); color: #fff; border-color: var(--red); }
+
+.cat-block { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.cat-block:last-child { border-bottom: none; }
+.cat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cat-name { font-weight: 700; font-size: 14.5px; }
+.cat-total { font-weight: 800; font-variant-numeric: tabular-nums; }
+.cat-bar { height: 8px; background: var(--surface-alt); border-radius: 999px; margin: 8px 0 10px; overflow: hidden; }
+.cat-bar > span { display: block; height: 100%; background: var(--red); border-radius: 999px; }
+.cat-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 13.5px; }
+.cat-item-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cat-item-medio { color: var(--text-faint); font-size: 12px; }
+.cat-item-monto { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.top-mes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 16px; }
+.top-mes {
+  background: var(--surface-alt); border-radius: var(--radius-sm); padding: 12px 14px;
+}
+.top-mes-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
+.top-mes-cat { font-weight: 700; margin-top: 4px; }
+.top-mes-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }

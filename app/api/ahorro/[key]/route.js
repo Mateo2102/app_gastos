@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
-import { eliminarAhorroReal } from '@/lib/logic';
+import { eliminarAhorroMov } from '@/lib/logic';
 import { getDashboardData } from '@/lib/dashboard';
 
 export async function DELETE(req, { params }) {
   try {
     const { key } = await params;
-    await eliminarAhorroReal(decodeURIComponent(key));
+    await eliminarAhorroMov(decodeURIComponent(key));
     const data = await getDashboardData();
     return NextResponse.json(data);
   } catch (e) {

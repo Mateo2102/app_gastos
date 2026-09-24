@@ -26,6 +26,14 @@ const fmt = (n) => (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString
 const fmtUSD = (n) =>
   n === null || n === undefined ? "—" : (n < 0 ? "-US$" : "US$") + Math.abs(Math.round(n)).toLocaleString("en-US");
 
+const fmtUSD2 = (n) => (n < 0 ? "-US$" : "US$") + Math.abs(n).toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+// "2026-09-24" -> "24/09/2026" (sin pasar por Date, para no depender de la zona horaria)
+function fechaLarga(iso) {
+  const [y, m, d] = String(iso).split("-");
+  return `${d}/${m}/${y}`;
+}
+
 function celdaEquivalencia(moneda, montoARS, montoUSD) {
   const esUSD = String(moneda || "").toUpperCase() === "USD";
   const principal = esUSD ? fmtUSD(montoUSD) : fmt(montoARS);
@@ -158,10 +166,11 @@ export default function Home() {
   const [sueldoForm, setSueldoForm] = useState({ month: mesObjetivo.month, year: mesObjetivo.year, monto: "" });
   const [sueldoStatus, setSueldoStatus] = useState("");
 
-  const [ahorroReal, setAhorroReal] = useState({});
+  const [ahorroMovs, setAhorroMovs] = useState([]);
   // El ahorro real se carga para un mes ya transcurrido (o en curso), no para el mes de
   // referencia futuro — por defecto el mes calendario actual, no mesObjetivo.
-  const [ahorroForm, setAhorroForm] = useState({ month: hoy.getMonth(), year: hoy.getFullYear(), monto: "", moneda: "ARS" });
+  const hoyISO = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`;
+  const [ahorroForm, setAhorroForm] = useState({ fecha: hoyISO, monto: "", moneda: "ARS" });
   const [ahorroStatus, setAhorroStatus] = useState("");
 
   const [filtroMes, setFiltroMes] = useState(mesObjetivo.month);
@@ -187,7 +196,8 @@ export default function Home() {
 
   // Pestaña "Gastos": mes elegido y cuotas de ese mes (los gastos fijos se suman aparte).
   const [gastosMesFiltro, setGastosMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
-  const [gastosMesCuotas, setGastosMesCuotas] = useState(null);
+  const [gastosHist, setGastosHist] = useState(null);
+  const [gastosCat, setGastosCat] = useState("");
 
   // Navegador de meses independiente para el detalle de una tarjeta puntual (estilo Mercado Pago).
   const [tarjetaMesFiltro, setTarjetaMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
@@ -195,6 +205,10 @@ export default function Home() {
 
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
+  const ahorroCanvasRef = useRef(null);
+  const ahorroChartRef = useRef(null);
+  const gastosCanvasRef = useRef(null);
+  const gastosChartRef = useRef(null);
 
   function render(payload, opts = {}) {
     if (!opts.onlyBase) setMeses(payload.meses || []);
@@ -203,7 +217,7 @@ export default function Home() {
     if (payload.config) {
       setCfgPiso(payload.config.piso || "");
       setSueldoSchedule(payload.config.sueldoSchedule || []);
-      setAhorroReal(payload.config.ahorroReal || {});
+      setAhorroMovs(payload.config.ahorroMovs || []);
     }
     if (payload.dolarBlue) setDolarBlue(payload.dolarBlue);
     else setDolarBlue(0);
@@ -249,21 +263,25 @@ export default function Home() {
     setTarjetaMesCuotas(payload.detalle || []);
   }
 
-  async function cargarGastosMes(month = gastosMesFiltro.month, year = gastosMesFiltro.year) {
-    const params = new URLSearchParams({ month: String(month), year: String(year) });
-    const payload = await fetchJSON(`/api/cuotas-mes?${params.toString()}`);
-    setGastosMesCuotas(payload.detalle || []);
+  // Historial de gastos: 24 meses hacia atrás y 11 hacia adelante del mes de referencia.
+  const gastosVentanaInicio = shiftMes(mesObjetivo.month, mesObjetivo.year, -24);
+
+  async function cargarGastosMes() {
+    const params = new URLSearchParams({
+      month: String(gastosVentanaInicio.month), year: String(gastosVentanaInicio.year), count: "36"
+    });
+    const payload = await fetchJSON(`/api/gastos-historial?${params.toString()}`);
+    setGastosHist(payload.meses || []);
   }
 
   function elegirMesGastos(month, year) {
     setGastosMesFiltro({ month, year });
-    cargarGastosMes(month, year);
   }
 
   // La pestaña "Gastos" se carga recién al abrirla, para no gastar lecturas de Sheets de más.
   function abrirTab(id) {
     setTab(id);
-    if (id === "gastos" && gastosMesCuotas === null) cargarGastosMes();
+    if (id === "gastos" && gastosHist === null) cargarGastosMes();
   }
 
   useEffect(() => {
@@ -375,9 +393,9 @@ export default function Home() {
     }
   }
 
-  async function eliminarAhorro(key) {
-    if (!confirm("¿Eliminar el ahorro cargado para este mes?")) return;
-    const payload = await fetchJSON(`/api/ahorro/${encodeURIComponent(key)}`, { method: "DELETE" });
+  async function eliminarAhorro(id) {
+    if (!confirm("¿Eliminar este movimiento de ahorro?")) return;
+    const payload = await fetchJSON(`/api/ahorro/${encodeURIComponent(id)}`, { method: "DELETE" });
     render(payload);
   }
 
@@ -432,7 +450,7 @@ export default function Home() {
       buscarHistorico();
       cargarCuotasMes();
       cargarTarjetaMes();
-      if (gastosMesCuotas !== null) cargarGastosMes();
+      if (gastosHist !== null) cargarGastosMes();
     } catch (e) {
       setSimStatus("❌ " + e.message);
     }
@@ -453,7 +471,7 @@ export default function Home() {
       buscarHistorico();
       cargarCuotasMes();
       cargarTarjetaMes();
-      if (gastosMesCuotas !== null) cargarGastosMes();
+      if (gastosHist !== null) cargarGastosMes();
     } catch (e) {
       setAddStatus("❌ " + e.message);
     }
@@ -543,23 +561,135 @@ export default function Home() {
     return totales;
   }, [itemsMesPorTarjeta]);
 
-  // Todos los gastos del mes elegido en la pestaña "Gastos": los fijos (se repiten cada mes)
-  // más las cuotas que caen en ese mes. Los ingresos extra no van acá.
-  const gastosDelMes = useMemo(() => {
-    if (gastosMesCuotas === null) return null;
-    const fijos = gastosFijos.map((g) => ({
-      key: `fijo-${g.row}`, desc: g.desc, medio: g.medio, detalle: "Fijo",
-      moneda: g.moneda, montoARS: g.montoARS, montoUSD: g.montoUSD
-    }));
-    const cuotas = gastosMesCuotas.map((c, i) => ({
-      key: `cuota-${i}`, desc: c.desc, medio: c.medio, detalle: `Cuota ${c.cuotaNumero} de ${c.cuotasTotales}`,
-      moneda: c.moneda, montoARS: c.montoCuotaARS, montoUSD: c.montoCuotaUSD
-    }));
-    return [...fijos, ...cuotas].sort(
-      (a, b) => String(a.medio).localeCompare(String(b.medio)) || b.montoARS - a.montoARS
-    );
-  }, [gastosFijos, gastosMesCuotas]);
-  const gastosDelMesTotal = (gastosDelMes || []).reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0);
+  // ---- Pestaña "Gastos": desglose del mes por categoría (Tipo) + evolutivo ----
+  const gastosItemsMes = useMemo(() => {
+    if (gastosHist === null) return null;
+    const mo = gastosHist.find((m) => m.key === `${gastosMesFiltro.year}-${gastosMesFiltro.month}`);
+    return mo ? mo.items : [];
+  }, [gastosHist, gastosMesFiltro]);
+
+  const gastosCategorias = useMemo(() => {
+    const totales = {};
+    (gastosItemsMes || []).forEach((g) => { totales[g.tipo] = (totales[g.tipo] || 0) + (Number(g.montoARS) || 0); });
+    return Object.entries(totales).sort((a, b) => b[1] - a[1]);
+  }, [gastosItemsMes]);
+  const gastosCatActiva = gastosCategorias.some(([t]) => t === gastosCat) ? gastosCat : "";
+
+  const gastosGrupos = useMemo(() => {
+    const grupos = {};
+    (gastosItemsMes || [])
+      .filter((g) => !gastosCatActiva || g.tipo === gastosCatActiva)
+      .forEach((g) => {
+        if (!grupos[g.tipo]) grupos[g.tipo] = { tipo: g.tipo, total: 0, items: [] };
+        grupos[g.tipo].total += Number(g.montoARS) || 0;
+        grupos[g.tipo].items.push(g);
+      });
+    return Object.values(grupos)
+      .sort((a, b) => b.total - a.total)
+      .map((gr) => ({ ...gr, items: [...gr.items].sort((a, b) => b.montoARS - a.montoARS) }));
+  }, [gastosItemsMes, gastosCatActiva]);
+  const gastosTotalMes = gastosGrupos.reduce((acc, gr) => acc + gr.total, 0);
+  const gastosCantidadMes = gastosGrupos.reduce((acc, gr) => acc + gr.items.length, 0);
+
+  // Evolutivo: 12 meses hacia atrás y 6 hacia adelante del mes de referencia, con la categoría
+  // y el gasto individual más grande de cada mes.
+  const objY = mesObjetivo.year, objM = mesObjetivo.month;
+  const evolutivo = useMemo(() => {
+    if (gastosHist === null) return [];
+    const iniNum = objY * 12 + objM - 11, finNum = objY * 12 + objM + 6;
+    return gastosHist
+      .filter((m) => { const n = m.year * 12 + m.month; return n >= iniNum && n <= finNum; })
+      .map((m) => {
+        const porCat = {};
+        m.items.forEach((g) => { porCat[g.tipo] = (porCat[g.tipo] || 0) + (Number(g.montoARS) || 0); });
+        const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+        const topItem = [...m.items].sort((a, b) => b.montoARS - a.montoARS)[0] || null;
+        return {
+          key: m.key, label: m.label,
+          total: m.items.reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0),
+          topCat: cats[0] || null, topItem
+        };
+      });
+  }, [gastosHist, objY, objM]);
+
+  useEffect(() => {
+    if (!gastosCanvasRef.current || tab !== "gastos") return;
+    if (gastosChartRef.current) gastosChartRef.current.destroy();
+    if (!evolutivo.length) return;
+    gastosChartRef.current = new Chart(gastosCanvasRef.current.getContext("2d"), {
+      type: "line",
+      data: {
+        labels: evolutivo.map((m) => m.label),
+        datasets: [
+          { label: "Total de gastos", data: evolutivo.map((m) => m.total), borderColor: "#7a0c2e", backgroundColor: "#7a0c2e", tension: 0.3, borderWidth: 3, pointRadius: 4 },
+          { label: "Categoría en la que más gasté", data: evolutivo.map((m) => (m.topCat ? m.topCat[1] : 0)), borderColor: "#b8720a", backgroundColor: "#b8720a", borderDash: [6, 4], tension: 0.3, borderWidth: 3, pointRadius: 4 }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top", labels: { usePointStyle: true, padding: 16, boxHeight: 8 } },
+          tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } }
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: { grid: { color: "#f1f1f4" }, border: { display: false }, ticks: { callback: (v) => fmt(v) } }
+        }
+      }
+    });
+  }, [evolutivo, tab]);
+
+  // Tenencia de ahorro: cada movimiento con su acumulado en la moneda en que se ahorró, y los
+  // totales en pesos y en dólares (más su equivalente con el dólar blue vigente).
+  const tenencia = useMemo(() => {
+    const asc = [...ahorroMovs].sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+    const acc = { ars: 0, usd: 0 };
+    const filas = [];
+    for (const m of asc) {
+      if (m.moneda === "USD") acc.usd += Number(m.monto) || 0;
+      else acc.ars += Number(m.monto) || 0;
+      filas.push({ ...m, accARS: acc.ars, accUSD: acc.usd });
+    }
+    const accARS = acc.ars, accUSD = acc.usd;
+    const equivARS = accARS + accUSD * (dolarBlue || 0);
+    const equivUSD = accUSD + (dolarBlue ? accARS / dolarBlue : 0);
+    return { filas, totalARS: accARS, totalUSD: accUSD, equivARS, equivUSD };
+  }, [ahorroMovs, dolarBlue]);
+
+  useEffect(() => {
+    if (!ahorroCanvasRef.current || tab !== "ahorro") return;
+    const filas = tenencia.filas;
+    if (ahorroChartRef.current) ahorroChartRef.current.destroy();
+    if (!filas.length) return;
+    const hayARS = filas.some((f) => f.moneda !== "USD");
+    const hayUSD = filas.some((f) => f.moneda === "USD");
+    ahorroChartRef.current = new Chart(ahorroCanvasRef.current.getContext("2d"), {
+      type: "line",
+      data: {
+        labels: filas.map((f) => fechaLarga(f.fecha)),
+        datasets: [
+          ...(hayARS ? [{ label: "Pesos acumulados", data: filas.map((f) => f.accARS), yAxisID: "y", borderColor: "#7a0c2e", backgroundColor: "#7a0c2e", stepped: true, borderWidth: 3, pointRadius: 4 }] : []),
+          ...(hayUSD ? [{ label: "Dólares acumulados", data: filas.map((f) => f.accUSD), yAxisID: "y2", borderColor: "#0a8a3d", backgroundColor: "#0a8a3d", stepped: true, borderWidth: 3, pointRadius: 4 }] : [])
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top", labels: { usePointStyle: true, padding: 16, boxHeight: 8 } },
+          tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.dataset.yAxisID === "y2" ? fmtUSD2(ctx.parsed.y) : fmt(ctx.parsed.y)}` } }
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: { display: hayARS, position: "left", grid: { color: "#f1f1f4" }, border: { display: false }, ticks: { callback: (v) => fmt(v) } },
+          y2: { display: hayUSD, position: "right", grid: { display: false }, border: { display: false }, ticks: { callback: (v) => fmtUSD2(v) } }
+        }
+      }
+    });
+  }, [tenencia, tab]);
 
   function irMesTarjeta(delta) {
     const nuevo = shiftMes(tarjetaMesFiltro.month, tarjetaMesFiltro.year, delta);
@@ -714,55 +844,92 @@ export default function Home() {
         )}
 
         {tab === "gastos" && (
-          <section className="card">
-            <div className="card-head-row">
-              <h2>Gastos de {MESES_NOMBRE[gastosMesFiltro.month].toLowerCase()} {gastosMesFiltro.year}</h2>
-              <div className="filtro-inline">
-                <button className="btn-icon" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, -1); elegirMesGastos(n.month, n.year); }}>‹</button>
-                <select value={gastosMesFiltro.month} onChange={(e) => elegirMesGastos(Number(e.target.value), gastosMesFiltro.year)}>
-                  {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
-                </select>
-                <select value={gastosMesFiltro.year} onChange={(e) => elegirMesGastos(gastosMesFiltro.month, Number(e.target.value))}>
-                  {Array.from({ length: 7 }, (_, i) => hoy.getFullYear() - 2 + i).map((y) => <option key={y} value={y}>{y}</option>)}
-                </select>
-                <button className="btn-icon" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, 1); elegirMesGastos(n.month, n.year); }}>›</button>
-                <button className="btn-ghost" onClick={() => elegirMesGastos(mesObjetivo.month, mesObjetivo.year)}>Hoy</button>
-              </div>
-            </div>
-
-            {gastosDelMes === null ? (
-              <div className="empty-hint">Cargando...</div>
-            ) : gastosDelMes.length === 0 ? (
-              <div className="empty-hint">No hay gastos en ese mes.</div>
-            ) : (
-              <>
-                <p className="hint" style={{ margin: "0 0 16px" }}>
-                  {gastosDelMes.length} gastos · total <span className="strong">{fmt(gastosDelMesTotal)}</span>
-                </p>
-                <div className="table-scroll">
-                  <table>
-                    <thead>
-                      <tr><th>Descripción</th><th>Medio</th><th>Detalle</th><th className="num">Monto</th></tr>
-                    </thead>
-                    <tbody>
-                      {gastosDelMes.map((g) => (
-                        <tr key={g.key}>
-                          <td className="strong">{g.desc}</td>
-                          <td>{g.medio}</td>
-                          <td><span className={`badge ${g.detalle === "Fijo" ? "badge-neutral" : "badge-info"}`}>{g.detalle}</span></td>
-                          <td className="num">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</td>
-                        </tr>
-                      ))}
-                      <tr>
-                        <td className="strong">Total</td><td></td><td></td>
-                        <td className="num strong">{fmt(gastosDelMesTotal)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
+          <div className="stack">
+            <section className="card">
+              <div className="card-head-row">
+                <h2>Gastos de {MESES_NOMBRE[gastosMesFiltro.month].toLowerCase()} {gastosMesFiltro.year}</h2>
+                <div className="filtro-inline">
+                  <button className="btn-icon" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, -1); elegirMesGastos(n.month, n.year); }}>‹</button>
+                  <select value={gastosMesFiltro.month} onChange={(e) => elegirMesGastos(Number(e.target.value), gastosMesFiltro.year)}>
+                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                  </select>
+                  <select value={gastosMesFiltro.year} onChange={(e) => elegirMesGastos(gastosMesFiltro.month, Number(e.target.value))}>
+                    {Array.from(
+                      { length: shiftMes(gastosVentanaInicio.month, gastosVentanaInicio.year, 35).year - gastosVentanaInicio.year + 1 },
+                      (_, i) => gastosVentanaInicio.year + i
+                    ).map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <button className="btn-icon" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, 1); elegirMesGastos(n.month, n.year); }}>›</button>
+                  <button className="btn-ghost" onClick={() => elegirMesGastos(mesObjetivo.month, mesObjetivo.year)}>Hoy</button>
                 </div>
-              </>
-            )}
-          </section>
+              </div>
+
+              {gastosItemsMes === null ? (
+                <div className="empty-hint">Cargando...</div>
+              ) : gastosCategorias.length === 0 ? (
+                <div className="empty-hint">No hay gastos en ese mes.</div>
+              ) : (
+                <>
+                  <div className="chips">
+                    <button className={`chip ${gastosCatActiva === "" ? "active" : ""}`} onClick={() => setGastosCat("")}>Todas</button>
+                    {gastosCategorias.map(([tipo, total]) => (
+                      <button key={tipo} className={`chip ${gastosCatActiva === tipo ? "active" : ""}`} onClick={() => setGastosCat(tipo)}>
+                        {tipo} · {fmt(total)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="hint" style={{ margin: "0 0 8px" }}>
+                    {gastosCantidadMes} gastos · total <span className="strong">{fmt(gastosTotalMes)}</span>
+                  </p>
+
+                  {gastosGrupos.map((gr) => (
+                    <div className="cat-block" key={gr.tipo}>
+                      <div className="cat-head">
+                        <span className="cat-name">{gr.tipo}</span>
+                        <span className="cat-total">{fmt(gr.total)}</span>
+                      </div>
+                      <div className="cat-bar"><span style={{ width: `${gastosTotalMes ? (gr.total / gastosTotalMes) * 100 : 0}%` }}></span></div>
+                      {gr.items.map((g, i) => (
+                        <div className="cat-item" key={`${gr.tipo}-${i}`}>
+                          <div className="cat-item-left">
+                            <span className="strong">{g.desc}</span>
+                            <span className="cat-item-medio">{g.medio}</span>
+                            <span className={`badge ${g.detalle === "Fijo" ? "badge-neutral" : "badge-info"}`}>{g.detalle}</span>
+                          </div>
+                          <div className="cat-item-monto">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </>
+              )}
+            </section>
+
+            <section className="card">
+              <div className="card-head">
+                <h2>Evolutivo de gastos</h2>
+              </div>
+              {evolutivo.length === 0 ? (
+                <div className="empty-hint">Cargando...</div>
+              ) : (
+                <>
+                  <div className="chart-box"><canvas ref={gastosCanvasRef}></canvas></div>
+                  <div className="subsection-title">En qué más gasté cada mes</div>
+                  <div className="top-mes-grid">
+                    {evolutivo.map((m) => (
+                      <div className="top-mes" key={m.key}>
+                        <div className="top-mes-label">{m.label}</div>
+                        <div className="top-mes-cat">{m.topCat ? `${m.topCat[0]} · ${fmt(m.topCat[1])}` : "—"}</div>
+                        <div className="top-mes-sub">
+                          {m.topItem ? `Mayor gasto: ${m.topItem.desc} (${fmt(m.topItem.montoARS)})` : "Sin gastos"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
         )}
 
         {tab === "sueldo" && (
@@ -824,70 +991,76 @@ export default function Home() {
 
         {tab === "ahorro" && (
           <div className="stack">
+            <div className="two-col">
+              <section className="card">
+                <div className="stat-tile-label">Ahorrado en pesos</div>
+                <div className="stat-tile-value">{fmt(tenencia.totalARS)}</div>
+                <div className="stat-tile-sub">≈ {fmtUSD2(dolarBlue ? tenencia.totalARS / dolarBlue : 0)} al dólar blue</div>
+              </section>
+              <section className="card">
+                <div className="stat-tile-label">Ahorrado en dólares</div>
+                <div className="stat-tile-value">{fmtUSD2(tenencia.totalUSD)}</div>
+                <div className="stat-tile-sub">≈ {fmt(tenencia.totalUSD * (dolarBlue || 0))} al dólar blue</div>
+              </section>
+            </div>
+
+            <section className="card">
+              <div className="card-head-row">
+                <h2>Tenencia total</h2>
+                <div className="tarjeta-totales">
+                  <span className="badge badge-total">{fmt(tenencia.equivARS)}</span>
+                  <span className="badge badge-neutral">≈ {fmtUSD2(tenencia.equivUSD)}</span>
+                </div>
+              </div>
+              {tenencia.filas.length === 0 ? (
+                <div className="empty-hint">Todavía no cargaste ahorros. Agregá el primero abajo.</div>
+              ) : (
+                <div className="chart-box"><canvas ref={ahorroCanvasRef}></canvas></div>
+              )}
+            </section>
+
             <section className="card">
               <div className="card-head">
-                <h2>Ahorro real vs. proyectado</h2>
+                <h2>Movimientos</h2>
               </div>
-              <p className="hint" style={{ margin: "0 0 16px" }}>
-                Cargá cuánto ahorraste realmente cada mes (en pesos o en dólares) para compararlo contra lo
-                proyectado. Queda guardado en la planilla, junto con el resto de la configuración.
-              </p>
+              {tenencia.filas.length > 0 && (
+                <div className="mov-list">
+                  {[...tenencia.filas].reverse().map((f) => (
+                    <div className="mov-row" key={f.id}>
+                      <div className="mov-fecha">{fechaLarga(f.fecha)}</div>
+                      <div className="mov-monto pos">
+                        + {f.moneda === "USD" ? fmtUSD2(f.monto) : fmt(f.monto)}
+                      </div>
+                      <div className="mov-acum">
+                        <span className="muted">Acumulado</span>{" "}
+                        {f.moneda === "USD" ? fmtUSD2(f.accUSD) : fmt(f.accARS)}
+                      </div>
+                      <button className="btn-danger-ghost" onClick={() => eliminarAhorro(f.id)}>Eliminar</button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-              <div className="table-scroll" style={{ marginBottom: 16 }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Mes</th><th className="num">Proyectado</th><th className="num">Real</th>
-                      <th className="num">Diferencia</th><th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {meses.map((mo) => {
-                      const real = mo.ahorroReal;
-                      const diferencia = real ? real.montoARS - mo.ahorroProyectado : null;
-                      return (
-                        <tr key={mo.key}>
-                          <td className="strong">{mo.label}</td>
-                          <td className={`num ${mo.ahorroProyectado >= 0 ? "pos" : "neg"}`}>{fmt(mo.ahorroProyectado)}</td>
-                          <td className="num">
-                            {real ? celdaEquivalencia(real.moneda, real.montoARS, real.montoUSD) : <span className="muted">— sin cargar —</span>}
-                          </td>
-                          <td className={`num ${real ? (diferencia >= 0 ? "pos" : "neg") : "muted"}`}>
-                            {real ? fmt(diferencia) : "—"}
-                          </td>
-                          <td className="col-action">
-                            {real && <button className="btn-danger-ghost" onClick={() => eliminarAhorro(mo.key)}>Eliminar</button>}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="field-row">
-                <div className="field">
-                  <label>Mes</label>
-                  <select value={ahorroForm.month} onChange={(e) => setAhorroForm({ ...ahorroForm, month: Number(e.target.value) })}>
-                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>Año</label>
-                  <input type="number" value={ahorroForm.year} onChange={(e) => setAhorroForm({ ...ahorroForm, year: Number(e.target.value) })} />
-                </div>
-                <div className="field">
-                  <label>Moneda</label>
-                  <select value={ahorroForm.moneda} onChange={(e) => setAhorroForm({ ...ahorroForm, moneda: e.target.value })}>
-                    {(opciones.monedas.length ? opciones.monedas : ["ARS", "USD"]).map((v) => <option key={v}>{v}</option>)}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>Ahorro real de ese mes</label>
-                  <input type="number" placeholder="0" value={ahorroForm.monto} onChange={(e) => setAhorroForm({ ...ahorroForm, monto: e.target.value })} />
-                </div>
-                <div className="field field-action">
-                  <button className="btn-primary" onClick={guardarAhorro}>Guardar</button>
+              <div className="pago-fields" style={{ marginTop: 16 }}>
+                <div className="field-row">
+                  <div className="field">
+                    <label>Fecha</label>
+                    <input type="date" value={ahorroForm.fecha} onChange={(e) => setAhorroForm({ ...ahorroForm, fecha: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label>Moneda</label>
+                    <select value={ahorroForm.moneda} onChange={(e) => setAhorroForm({ ...ahorroForm, moneda: e.target.value })}>
+                      <option value="ARS">Pesos (ARS)</option>
+                      <option value="USD">Dólares (USD)</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Monto ahorrado</label>
+                    <input type="number" placeholder="0" value={ahorroForm.monto} onChange={(e) => setAhorroForm({ ...ahorroForm, monto: e.target.value })} />
+                  </div>
+                  <div className="field field-action">
+                    <button className="btn-primary" onClick={guardarAhorro}>Agregar</button>
+                  </div>
                 </div>
               </div>
               {ahorroStatus && <div className="status">{ahorroStatus}</div>}
