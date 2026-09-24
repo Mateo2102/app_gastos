@@ -156,7 +156,7 @@ export default function Home() {
   const [porCuenta, setPorCuenta] = useState(null);
   const [gastosFijos, setGastosFijos] = useState([]);
   const [historico, setHistorico] = useState(null);
-  const [opciones, setOpciones] = useState({ bancos: [], formasPago: [], marcas: [], tipos: [], gastos: [], monedas: [] });
+  const [opciones, setOpciones] = useState({ bancos: [], formasPago: [], marcas: [], tipos: [], categorias: [], gastos: [], monedas: [] });
   const [tarjetaActiva, setTarjetaActiva] = useState(null);
 
   const [cfgPiso, setCfgPiso] = useState("");
@@ -179,7 +179,7 @@ export default function Home() {
   const pagoInicial = { formaPago: FORMA_TARJETA, banco: "", marca: "VISA", fechaCierre: "" };
 
   const [gForm, setGForm] = useState({
-    gasto: "", tipo: "", ...pagoInicial, desc: "", fecha: "", cuotas: 1, moneda: "ARS", monto: ""
+    gasto: "", tipo: "", categoria: "", ...pagoInicial, desc: "", fecha: "", cuotas: 1, moneda: "ARS", monto: ""
   });
   const [addStatus, setAddStatus] = useState("");
 
@@ -199,6 +199,10 @@ export default function Home() {
   const [gastosHist, setGastosHist] = useState(null);
   const [gastosCat, setGastosCat] = useState("");
 
+  // Pestaña "Histórico": mes de compra elegido y categoría.
+  const [histMes, setHistMes] = useState({ month: hoy.getMonth(), year: hoy.getFullYear() });
+  const [histCat, setHistCat] = useState("");
+
   // Navegador de meses independiente para el detalle de una tarjeta puntual (estilo Mercado Pago).
   const [tarjetaMesFiltro, setTarjetaMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
   const [tarjetaMesCuotas, setTarjetaMesCuotas] = useState(null);
@@ -209,6 +213,8 @@ export default function Home() {
   const ahorroChartRef = useRef(null);
   const gastosCanvasRef = useRef(null);
   const gastosChartRef = useRef(null);
+  const histCanvasRef = useRef(null);
+  const histChartRef = useRef(null);
 
   function render(payload, opts = {}) {
     if (!opts.onlyBase) setMeses(payload.meses || []);
@@ -570,7 +576,7 @@ export default function Home() {
 
   const gastosCategorias = useMemo(() => {
     const totales = {};
-    (gastosItemsMes || []).forEach((g) => { totales[g.tipo] = (totales[g.tipo] || 0) + (Number(g.montoARS) || 0); });
+    (gastosItemsMes || []).forEach((g) => { totales[g.categoria] = (totales[g.categoria] || 0) + (Number(g.montoARS) || 0); });
     return Object.entries(totales).sort((a, b) => b[1] - a[1]);
   }, [gastosItemsMes]);
   const gastosCatActiva = gastosCategorias.some(([t]) => t === gastosCat) ? gastosCat : "";
@@ -578,11 +584,11 @@ export default function Home() {
   const gastosGrupos = useMemo(() => {
     const grupos = {};
     (gastosItemsMes || [])
-      .filter((g) => !gastosCatActiva || g.tipo === gastosCatActiva)
+      .filter((g) => !gastosCatActiva || g.categoria === gastosCatActiva)
       .forEach((g) => {
-        if (!grupos[g.tipo]) grupos[g.tipo] = { tipo: g.tipo, total: 0, items: [] };
-        grupos[g.tipo].total += Number(g.montoARS) || 0;
-        grupos[g.tipo].items.push(g);
+        if (!grupos[g.categoria]) grupos[g.categoria] = { tipo: g.categoria, total: 0, items: [] };
+        grupos[g.categoria].total += Number(g.montoARS) || 0;
+        grupos[g.categoria].items.push(g);
       });
     return Object.values(grupos)
       .sort((a, b) => b.total - a.total)
@@ -601,7 +607,7 @@ export default function Home() {
       .filter((m) => { const n = m.year * 12 + m.month; return n >= iniNum && n <= finNum; })
       .map((m) => {
         const porCat = {};
-        m.items.forEach((g) => { porCat[g.tipo] = (porCat[g.tipo] || 0) + (Number(g.montoARS) || 0); });
+        m.items.forEach((g) => { porCat[g.categoria] = (porCat[g.categoria] || 0) + (Number(g.montoARS) || 0); });
         const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
         const topItem = [...m.items].sort((a, b) => b.montoARS - a.montoARS)[0] || null;
         return {
@@ -640,6 +646,101 @@ export default function Home() {
       }
     });
   }, [evolutivo, tab]);
+
+  // ---- Pestaña "Histórico": compras por fecha de compra, por categoría, más evolutivo ----
+  const histRegistros = useMemo(() => {
+    if (!historico) return null;
+    return historico
+      .filter((h) => h.gasto === "Gasto variable")
+      .map((h) => {
+        const [d, m, y] = String(h.fecha).split("/").map(Number);
+        return { ...h, dia: d, y, m: m - 1, categoriaG: h.categoria || "Sin categorizar", total: Number(h.totalARS) || 0 };
+      })
+      .filter((h) => h.y);
+  }, [historico]);
+
+  const histItemsMes = useMemo(
+    () => (histRegistros === null ? null : histRegistros.filter((h) => h.y === histMes.year && h.m === histMes.month)),
+    [histRegistros, histMes]
+  );
+  const histCategorias = useMemo(() => {
+    const totales = {};
+    (histItemsMes || []).forEach((h) => { totales[h.categoriaG] = (totales[h.categoriaG] || 0) + h.total; });
+    return Object.entries(totales).sort((a, b) => b[1] - a[1]);
+  }, [histItemsMes]);
+  const histCatActiva = histCategorias.some(([c]) => c === histCat) ? histCat : "";
+  const histGrupos = useMemo(() => {
+    const grupos = {};
+    (histItemsMes || [])
+      .filter((h) => !histCatActiva || h.categoriaG === histCatActiva)
+      .forEach((h) => {
+        if (!grupos[h.categoriaG]) grupos[h.categoriaG] = { cat: h.categoriaG, total: 0, items: [] };
+        grupos[h.categoriaG].total += h.total;
+        grupos[h.categoriaG].items.push(h);
+      });
+    return Object.values(grupos)
+      .sort((a, b) => b.total - a.total)
+      .map((g) => ({ ...g, items: [...g.items].sort((a, b) => b.total - a.total) }));
+  }, [histItemsMes, histCatActiva]);
+  const histTotalMes = histGrupos.reduce((acc, g) => acc + g.total, 0);
+  const histCantidadMes = histGrupos.reduce((acc, g) => acc + g.items.length, 0);
+  const histAnios = useMemo(() => {
+    const anios = new Set([hoy.getFullYear()]);
+    (histRegistros || []).forEach((h) => anios.add(h.y));
+    return [...anios].sort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [histRegistros]);
+
+  // Evolutivo: lo comprado en cada mes (por fecha de compra), últimos 18 meses con movimientos.
+  const histEvolutivo = useMemo(() => {
+    if (!histRegistros) return [];
+    const porMes = {};
+    histRegistros.forEach((h) => {
+      const n = h.y * 12 + h.m;
+      if (!porMes[n]) porMes[n] = { y: h.y, m: h.m, items: [] };
+      porMes[n].items.push(h);
+    });
+    return Object.keys(porMes).map(Number).sort((a, b) => a - b).slice(-18).map((n) => {
+      const { y, m, items } = porMes[n];
+      const porCat = {};
+      items.forEach((h) => { porCat[h.categoriaG] = (porCat[h.categoriaG] || 0) + h.total; });
+      const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+      const topItem = [...items].sort((a, b) => b.total - a.total)[0];
+      return {
+        key: `${y}-${m}`, label: `${MESES_NOMBRE[m].slice(0, 3)} ${y}`,
+        total: items.reduce((acc, h) => acc + h.total, 0), topCat: cats[0] || null, topItem
+      };
+    });
+  }, [histRegistros]);
+
+  useEffect(() => {
+    if (!histCanvasRef.current || tab !== "historico") return;
+    if (histChartRef.current) histChartRef.current.destroy();
+    if (!histEvolutivo.length) return;
+    histChartRef.current = new Chart(histCanvasRef.current.getContext("2d"), {
+      type: "line",
+      data: {
+        labels: histEvolutivo.map((m) => m.label),
+        datasets: [
+          { label: "Total comprado", data: histEvolutivo.map((m) => m.total), borderColor: "#7a0c2e", backgroundColor: "#7a0c2e", tension: 0.3, borderWidth: 3, pointRadius: 4 },
+          { label: "Categoría en la que más gasté", data: histEvolutivo.map((m) => (m.topCat ? m.topCat[1] : 0)), borderColor: "#b8720a", backgroundColor: "#b8720a", borderDash: [6, 4], tension: 0.3, borderWidth: 3, pointRadius: 4 }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top", labels: { usePointStyle: true, padding: 16, boxHeight: 8 } },
+          tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } }
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: { grid: { color: "#f1f1f4" }, border: { display: false }, ticks: { callback: (v) => fmt(v) } }
+        }
+      }
+    });
+  }, [histEvolutivo, tab]);
 
   // Tenencia de ahorro: cada movimiento con su acumulado en la moneda en que se ahorró, y los
   // totales en pesos y en dólares (más su equivalente con el dólar blue vigente).
@@ -832,7 +933,10 @@ export default function Home() {
                           {mo.ingresoExtra > 0 && <div className="subnote">incl. extra {fmt(mo.ingresoExtra)}</div>}
                         </td>
                         <td className="num neg">{fmt(mo.gastos)}</td>
-                        <td className="num muted">{fmt(mo.piso)}</td>
+                        <td className="num muted">
+                          {fmt(mo.piso)}
+                          {mo.piso < mo.pisoConfigurado && <div className="subnote">ajustado (config. {fmt(mo.pisoConfigurado)})</div>}
+                        </td>
                         <td className={`num strong ${mo.ahorroProyectado >= 0 ? "pos" : "neg"}`}>{fmt(mo.ahorroProyectado)}</td>
                       </tr>
                     ))}
@@ -1342,7 +1446,7 @@ export default function Home() {
               <div className="card-head">
                 <h2>➕ Cargar gasto / ingreso extra</h2>
               </div>
-              <label>Categoría</label>
+              <label>Fijo o variable</label>
               <select value={gForm.gasto} onChange={(e) => setGForm({ ...gForm, gasto: e.target.value })}>
                 {opciones.gastos.map((v) => <option key={v}>{v}</option>)}
               </select>
@@ -1350,6 +1454,9 @@ export default function Home() {
               <select value={gForm.tipo} onChange={(e) => setGForm({ ...gForm, tipo: e.target.value })}>
                 {opciones.tipos.map((v) => <option key={v}>{v}</option>)}
               </select>
+              <label>Categoría de gasto (opcional)</label>
+              <input list="lista-categorias" placeholder="Ej: Comida, Salidas, Auto..." value={gForm.categoria} onChange={(e) => setGForm({ ...gForm, categoria: e.target.value })} />
+              <datalist id="lista-categorias">{opciones.categorias.map((c) => <option key={c} value={c} />)}</datalist>
               <label>Descripción</label>
               <input placeholder="Ej: Zapatillas" value={gForm.desc} onChange={(e) => setGForm({ ...gForm, desc: e.target.value })} />
               <label>Fecha de compra / del ingreso</label>
@@ -1396,48 +1503,88 @@ export default function Home() {
         )}
 
         {tab === "historico" && (
-          <section className="card">
-            <div className="card-head-row">
-              <h2>Histórico completo</h2>
-              <div className="filtro-inline">
-                <input type="date" value={histDesde} onChange={(e) => setHistDesde(e.target.value)} />
-                <span className="filtro-sep">a</span>
-                <input type="date" value={histHasta} onChange={(e) => setHistHasta(e.target.value)} />
-                <button className="btn-secondary" onClick={() => buscarHistorico()}>Buscar</button>
-                <button className="btn-ghost" onClick={() => { setHistDesde(""); setHistHasta(""); buscarHistorico("", ""); }}>Todo</button>
+          <div className="stack">
+            <section className="card">
+              <div className="card-head-row">
+                <h2>Compras de {MESES_NOMBRE[histMes.month].toLowerCase()} {histMes.year}</h2>
+                <div className="filtro-inline">
+                  <button className="btn-icon" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, -1))}>‹</button>
+                  <select value={histMes.month} onChange={(e) => setHistMes({ ...histMes, month: Number(e.target.value) })}>
+                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                  </select>
+                  <select value={histMes.year} onChange={(e) => setHistMes({ ...histMes, year: Number(e.target.value) })}>
+                    {histAnios.map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <button className="btn-icon" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, 1))}>›</button>
+                  <button className="btn-ghost" onClick={() => setHistMes({ month: hoy.getMonth(), year: hoy.getFullYear() })}>Hoy</button>
+                </div>
               </div>
-            </div>
-            <div className="table-scroll">
-              <table>
-                {historico === null ? null : historico.length === 0 ? (
-                  <tbody><tr><td className="empty-hint">Sin resultados en ese rango.</td></tr></tbody>
-                ) : (
-                  <>
-                    <thead>
-                      <tr>
-                        <th>Fecha</th><th>Gasto</th><th>Tipo</th><th>Medio</th><th>Descripción</th>
-                        <th>Cuotas</th><th className="num">Monto</th><th>Estado</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {historico.map((h) => (
-                        <tr key={h.row}>
-                          <td className="muted">{h.fecha}</td>
-                          <td>{h.gasto}</td>
-                          <td>{h.tipo}</td>
-                          <td>{h.medio}</td>
-                          <td className="strong">{h.desc}</td>
-                          <td>{h.cuotas}</td>
-                          <td className="num">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</td>
-                          <td>{estadoBadge(h.estado)}</td>
-                        </tr>
+
+              {histItemsMes === null ? (
+                <div className="empty-hint">Cargando...</div>
+              ) : histCategorias.length === 0 ? (
+                <div className="empty-hint">No hay compras cargadas en ese mes.</div>
+              ) : (
+                <>
+                  <div className="chips">
+                    <button className={`chip ${histCatActiva === "" ? "active" : ""}`} onClick={() => setHistCat("")}>Todas</button>
+                    {histCategorias.map(([cat, total]) => (
+                      <button key={cat} className={`chip ${histCatActiva === cat ? "active" : ""}`} onClick={() => setHistCat(cat)}>
+                        {cat} · {fmt(total)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="hint" style={{ margin: "0 0 8px" }}>
+                    {histCantidadMes} compras · total <span className="strong">{fmt(histTotalMes)}</span>
+                  </p>
+
+                  {histGrupos.map((g) => (
+                    <div className="cat-block" key={g.cat}>
+                      <div className="cat-head">
+                        <span className="cat-name">{g.cat}</span>
+                        <span className="cat-total">{fmt(g.total)}</span>
+                      </div>
+                      <div className="cat-bar"><span style={{ width: `${histTotalMes ? (g.total / histTotalMes) * 100 : 0}%` }}></span></div>
+                      {g.items.map((h) => (
+                        <div className="cat-item" key={h.row}>
+                          <div className="cat-item-left">
+                            <span className="cat-item-medio">{String(h.dia).padStart(2, "0")}/{String(h.m + 1).padStart(2, "0")}</span>
+                            <span className="strong">{h.desc}</span>
+                            <span className="cat-item-medio">{h.medio}</span>
+                            {Number(h.cuotas) > 1 && <span className="badge badge-info">{h.cuotas} cuotas</span>}
+                          </div>
+                          <div className="cat-item-monto">{celdaEquivalencia(h.moneda, h.totalARS, h.totalUSD)}</div>
+                        </div>
                       ))}
-                    </tbody>
-                  </>
-                )}
-              </table>
-            </div>
-          </section>
+                    </div>
+                  ))}
+                </>
+              )}
+            </section>
+
+            <section className="card">
+              <div className="card-head">
+                <h2>Evolutivo de compras</h2>
+              </div>
+              {histEvolutivo.length === 0 ? (
+                <div className="empty-hint">Cargando...</div>
+              ) : (
+                <>
+                  <div className="chart-box"><canvas ref={histCanvasRef}></canvas></div>
+                  <div className="subsection-title">En qué más gasté cada mes</div>
+                  <div className="top-mes-grid">
+                    {histEvolutivo.map((m) => (
+                      <div className="top-mes" key={m.key}>
+                        <div className="top-mes-label">{m.label}</div>
+                        <div className="top-mes-cat">{m.topCat ? `${m.topCat[0]} · ${fmt(m.topCat[1])}` : "—"}</div>
+                        <div className="top-mes-sub">{m.topItem ? `Mayor compra: ${m.topItem.desc} (${fmt(m.topItem.total)})` : "Sin compras"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
         )}
       </main>
     </div>
