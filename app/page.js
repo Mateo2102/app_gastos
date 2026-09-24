@@ -214,8 +214,8 @@ export default function Home() {
   const ahorroChartRef = useRef(null);
   const gastosCanvasRef = useRef(null);
   const gastosChartRef = useRef(null);
-  const gastosDonutRef = useRef(null);
-  const gastosDonutChart = useRef(null);
+  const gastosDashRef = useRef(null);
+  const gastosDashChart = useRef(null);
   const histCanvasRef = useRef(null);
   const histChartRef = useRef(null);
 
@@ -745,50 +745,85 @@ export default function Home() {
     });
   }, [histEvolutivo, tab]);
 
-  // ---- Dashboard de gastos: KPIs del mes elegido ----
+  // ---- Dashboard de gastos: ¿qué pasó con mi plata en el mes elegido? (solo histórico/corriente) ----
   const gastosKpis = useMemo(() => {
     if (gastosHist === null) return null;
     const idx = gastosHist.findIndex((m) => m.key === `${gastosMesFiltro.year}-${gastosMesFiltro.month}`);
     if (idx < 0) return null;
     const suma = (items) => items.reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0);
+    // Los fijos se repiten todos los meses, así que antes de la primera compra real no hay historia.
+    const primero = Math.max(0, gastosHist.findIndex((m) => m.items.some((g) => g.detalle !== "Fijo")));
     const mo = gastosHist[idx];
     const total = suma(mo.items);
-    const prev = idx > 0 ? suma(gastosHist[idx - 1].items) : null;
-    const fijos = suma(mo.items.filter((g) => g.detalle === "Fijo"));
-    const ultimos = gastosHist.slice(Math.max(0, idx - 5), idx + 1);
-    const promedio = ultimos.reduce((acc, m) => acc + suma(m.items), 0) / ultimos.length;
-    const comprometido = gastosHist.slice(idx + 1).reduce((acc, m) => acc + suma(m.items.filter((g) => g.detalle !== "Fijo")), 0);
-    const agrupar = (keyFn) => {
-      const t = {};
-      mo.items.forEach((g) => { const k = keyFn(g); t[k] = (t[k] || 0) + (Number(g.montoARS) || 0); });
-      return Object.entries(t).sort((a, b) => b[1] - a[1]);
+    const hayPrev = idx - 1 >= primero;
+    const prevItems = hayPrev ? gastosHist[idx - 1].items : null;
+    const prev = hayPrev ? suma(prevItems) : null;
+
+    // fijo / variable (pago único) / cuotas (más de una cuota)
+    const clase = (g) => (g.detalle === "Fijo" ? "fijo" : (Number(g.cuotasTotales) > 1 ? "cuotas" : "variable"));
+    const porClase = (items) => {
+      const r = { fijo: 0, variable: 0, cuotas: 0 };
+      items.forEach((g) => { r[clase(g)] += Number(g.montoARS) || 0; });
+      return r;
     };
-    const ing = (meses.find((m) => m.key === mo.key) || mesesBase.find((m) => m.key === mo.key))?.ingresos ?? null;
+    const cur = porClase(mo.items);
+    const ant = prevItems ? porClase(prevItems) : null;
+
+    // categorías: top 5 + Otros
+    const t = {};
+    mo.items.forEach((g) => { t[g.categoria] = (t[g.categoria] || 0) + (Number(g.montoARS) || 0); });
+    const cats = Object.entries(t).sort((a, b) => b[1] - a[1]);
+    const ranking = cats.slice(0, 5);
+    const resto = cats.slice(5);
+    if (resto.length) ranking.push([`Otros (${resto.length})`, resto.reduce((acc, [, v]) => acc + v, 0)]);
+
+    const m = {};
+    mo.items.forEach((g) => { m[g.medio] = (m[g.medio] || 0) + (Number(g.montoARS) || 0); });
+
+    // evolución: hasta 6 meses terminando en el elegido
+    const serie = gastosHist.slice(Math.max(primero, idx - 5), idx + 1).map((x) => ({ label: x.label, total: suma(x.items) }));
+    const promedio = serie.reduce((acc, x) => acc + x.total, 0) / serie.length;
+    let tendencia = null;
+    if (serie.length >= 4) {
+      const ult = serie.slice(-3), ant3 = serie.slice(-6, -3);
+      const avg = (arr) => arr.reduce((acc, x) => acc + x.total, 0) / arr.length;
+      const dif = avg(ant3) ? (avg(ult) - avg(ant3)) / avg(ant3) : 0;
+      tendencia = { dif, texto: dif > 0.05 ? "en alza" : (dif < -0.05 ? "en baja" : "estable") };
+    }
+
+    const ing = (meses.find((x) => x.key === mo.key) || mesesBase.find((x) => x.key === mo.key))?.ingresos ?? null;
     const top = [...mo.items].sort((a, b) => b.montoARS - a.montoARS);
     return {
-      label: mo.label, total, prev, fijos, cuotas: total - fijos, promedio, comprometido,
-      ingresos: ing, porCat: agrupar((g) => g.categoria), porMedio: agrupar((g) => g.medio),
-      top5: top.slice(0, 5), mayor: top[0] || null, cantidad: mo.items.length
+      total, prev, cur, ant, ranking, medios: Object.entries(m).sort((a, b) => b[1] - a[1]),
+      serie, promedio, tendencia, ingresos: ing, top5: top.slice(0, 5), cantidad: mo.items.length
     };
   }, [gastosHist, gastosMesFiltro, meses, mesesBase]);
 
   useEffect(() => {
-    if (!gastosDonutRef.current || tab !== "gastos" || gastosVista !== "dashboard") return;
-    if (gastosDonutChart.current) gastosDonutChart.current.destroy();
-    if (!gastosKpis || !gastosKpis.porCat.length) return;
-    const colores = ["#7a0c2e", "#b8720a", "#0a8a3d", "#1c1c1e", "#3b82f6", "#a855f7", "#f43f5e", "#14b8a6", "#84cc16", "#94a3b8"];
-    gastosDonutChart.current = new Chart(gastosDonutRef.current.getContext("2d"), {
-      type: "doughnut",
+    if (!gastosDashRef.current || tab !== "gastos" || gastosVista !== "dashboard") return;
+    if (gastosDashChart.current) gastosDashChart.current.destroy();
+    if (!gastosKpis || !gastosKpis.serie.length) return;
+    const s = gastosKpis.serie;
+    gastosDashChart.current = new Chart(gastosDashRef.current.getContext("2d"), {
+      type: "bar",
       data: {
-        labels: gastosKpis.porCat.map(([c]) => c),
-        datasets: [{ data: gastosKpis.porCat.map(([, v]) => v), backgroundColor: gastosKpis.porCat.map((_, i) => colores[i % colores.length]), borderWidth: 2, borderColor: "#fff" }]
+        labels: s.map((x) => x.label),
+        datasets: [
+          { type: "bar", label: "Gasto del mes", data: s.map((x) => x.total), borderRadius: 6, barPercentage: 0.6,
+            backgroundColor: s.map((_, i) => (i === s.length - 1 ? "#7a0c2e" : "#d9b3bd")) },
+          { type: "line", label: "Promedio", data: s.map(() => gastosKpis.promedio), borderColor: "#1c1c1e", borderDash: [6, 4], borderWidth: 2, pointRadius: 0 }
+        ]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { position: "right", labels: { usePointStyle: true, boxHeight: 8 } },
-          tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${fmt(ctx.parsed)}` } }
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } }
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: { grid: { color: "#f1f1f4" }, border: { display: false }, ticks: { callback: (v) => fmt(v) } }
         }
       }
     });
@@ -1030,99 +1065,110 @@ export default function Home() {
                 <section className="card"><div className="empty-hint">Cargando...</div></section>
               ) : (
                 <>
-                  <div className="kpi-grid">
-                    <div className="card kpi">
-                      <div className="stat-tile-label">Total del mes</div>
-                      <div className="stat-tile-value">{fmt(gastosKpis.total)}</div>
-                      <div className="stat-tile-sub">
-                        {gastosKpis.prev === null ? `${gastosKpis.cantidad} gastos` : (
-                          <span className={gastosKpis.total > gastosKpis.prev ? "kpi-up" : "kpi-down"}>
-                            {gastosKpis.total > gastosKpis.prev ? "▲" : "▼"} {fmt(Math.abs(gastosKpis.total - gastosKpis.prev))}
-                            {gastosKpis.prev ? ` (${Math.round(Math.abs(gastosKpis.total - gastosKpis.prev) / gastosKpis.prev * 100)}%)` : ""} vs mes anterior
-                          </span>
-                        )}
+                  <section className="card">
+                    <div className="hero-kpi">
+                      <div>
+                        <div className="stat-tile-label">Total del mes</div>
+                        <div className="hero-kpi-value">{fmt(gastosKpis.total)}</div>
+                        <div className="stat-tile-sub">
+                          {gastosKpis.prev === null ? `${gastosKpis.cantidad} gastos` : (
+                            <span className={gastosKpis.total > gastosKpis.prev ? "kpi-up" : "kpi-down"}>
+                              {gastosKpis.total > gastosKpis.prev ? "↑" : "↓"} {fmt(Math.abs(gastosKpis.total - gastosKpis.prev))}
+                              {gastosKpis.prev ? ` (${gastosKpis.total > gastosKpis.prev ? "+" : "-"}${Math.round(Math.abs(gastosKpis.total - gastosKpis.prev) / gastosKpis.prev * 100)}%)` : ""} vs mes anterior
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="hero-kpi-side">
+                        <div><span className="muted">Gastos fijos</span> <strong>{fmt(gastosKpis.cur.fijo)}</strong></div>
+                        <div><span className="muted">Compras en cuotas</span> <strong>{fmt(gastosKpis.cur.cuotas)}</strong></div>
+                        <div>
+                          <span className="muted">Ingresos usados</span>{" "}
+                          <strong>{gastosKpis.ingresos ? `${Math.round((gastosKpis.total / gastosKpis.ingresos) * 100)}%` : "—"}</strong>
+                        </div>
+                        <div>
+                          <span className="muted">Promedio {gastosKpis.serie.length} meses</span> <strong>{fmt(gastosKpis.promedio)}</strong>
+                        </div>
                       </div>
                     </div>
-                    <div className="card kpi">
-                      <div className="stat-tile-label">Gastos fijos</div>
-                      <div className="stat-tile-value">{fmt(gastosKpis.fijos)}</div>
-                      <div className="stat-tile-sub">{gastosKpis.total ? Math.round((gastosKpis.fijos / gastosKpis.total) * 100) : 0}% del total · se repite todos los meses</div>
-                    </div>
-                    <div className="card kpi">
-                      <div className="stat-tile-label">Compras en cuotas</div>
-                      <div className="stat-tile-value">{fmt(gastosKpis.cuotas)}</div>
-                      <div className="stat-tile-sub">{gastosKpis.total ? Math.round((gastosKpis.cuotas / gastosKpis.total) * 100) : 0}% del total</div>
-                    </div>
-                    <div className="card kpi">
-                      <div className="stat-tile-label">Sobre tus ingresos</div>
-                      <div className="stat-tile-value">
-                        {gastosKpis.ingresos ? `${Math.round((gastosKpis.total / gastosKpis.ingresos) * 100)}%` : "—"}
+                  </section>
+
+                  <section className="card">
+                    <div className="card-head"><h2>En qué gasté</h2></div>
+                    {gastosKpis.ranking.length === 0 ? (
+                      <div className="empty-hint">Sin gastos en el mes.</div>
+                    ) : gastosKpis.ranking.map(([cat, monto]) => (
+                      <div className="rank-row" key={cat}>
+                        <span className="rank-name">{cat}</span>
+                        <div className="rank-bar"><span style={{ width: `${gastosKpis.total ? (monto / gastosKpis.total) * 100 : 0}%` }}></span></div>
+                        <span className="rank-monto">{fmt(monto)}</span>
+                        <span className="rank-pct">{gastosKpis.total ? Math.round((monto / gastosKpis.total) * 100) : 0}%</span>
                       </div>
-                      <div className="stat-tile-sub">
-                        {gastosKpis.ingresos ? `Ingresos del mes: ${fmt(gastosKpis.ingresos)}` : "Sin ingresos cargados para este mes"}
-                      </div>
+                    ))}
+                  </section>
+
+                  <section className="card">
+                    <div className="card-head"><h2>Composición del gasto</h2></div>
+                    <div className="comp-bar">
+                      {[["fijo", "#7a0c2e"], ["variable", "#b8720a"], ["cuotas", "#1c1c1e"]].map(([k, color]) => (
+                        <span key={k} style={{ width: `${gastosKpis.total ? (gastosKpis.cur[k] / gastosKpis.total) * 100 : 0}%`, background: color }}></span>
+                      ))}
                     </div>
-                    <div className="card kpi">
-                      <div className="stat-tile-label">Promedio (últimos 6 meses)</div>
-                      <div className="stat-tile-value">{fmt(gastosKpis.promedio)}</div>
-                      <div className="stat-tile-sub">
-                        <span className={gastosKpis.total > gastosKpis.promedio ? "kpi-up" : "kpi-down"}>
-                          Este mes: {gastosKpis.total > gastosKpis.promedio ? "por encima" : "por debajo"} ({fmt(Math.abs(gastosKpis.total - gastosKpis.promedio))})
+                    {[["fijo", "Gastos fijos", "#7a0c2e"], ["variable", "Gastos variables (pago único)", "#b8720a"], ["cuotas", "Compras en cuotas", "#1c1c1e"]].map(([k, nombre, color]) => (
+                      <div className="comp-row" key={k}>
+                        <span className="comp-dot" style={{ background: color }}></span>
+                        <span className="comp-name">{nombre}</span>
+                        <span className="rank-monto">{fmt(gastosKpis.cur[k])}</span>
+                        <span className="rank-pct">{gastosKpis.total ? Math.round((gastosKpis.cur[k] / gastosKpis.total) * 100) : 0}%</span>
+                        <span className="comp-delta">
+                          {gastosKpis.ant === null ? "" : (
+                            <span className={gastosKpis.cur[k] > gastosKpis.ant[k] ? "kpi-up" : (gastosKpis.cur[k] < gastosKpis.ant[k] ? "kpi-down" : "muted")}>
+                              {gastosKpis.cur[k] === gastosKpis.ant[k] ? "= igual" : `${gastosKpis.cur[k] > gastosKpis.ant[k] ? "↑" : "↓"} ${fmt(Math.abs(gastosKpis.cur[k] - gastosKpis.ant[k]))}`}
+                            </span>
+                          )}
                         </span>
                       </div>
-                    </div>
-                    <div className="card kpi">
-                      <div className="stat-tile-label">Cuotas ya comprometidas</div>
-                      <div className="stat-tile-value">{fmt(gastosKpis.comprometido)}</div>
-                      <div className="stat-tile-sub">A pagar en los meses siguientes</div>
-                    </div>
-                    <div className="card kpi">
-                      <div className="stat-tile-label">Categoría principal</div>
-                      <div className="stat-tile-value" style={{ fontSize: 17 }}>{gastosKpis.porCat[0] ? gastosKpis.porCat[0][0] : "—"}</div>
-                      <div className="stat-tile-sub">
-                        {gastosKpis.porCat[0] ? `${fmt(gastosKpis.porCat[0][1])} · ${Math.round((gastosKpis.porCat[0][1] / gastosKpis.total) * 100)}% del total` : ""}
-                      </div>
-                    </div>
-                    <div className="card kpi">
-                      <div className="stat-tile-label">Mayor gasto</div>
-                      <div className="stat-tile-value" style={{ fontSize: 17 }}>{gastosKpis.mayor ? gastosKpis.mayor.desc : "—"}</div>
-                      <div className="stat-tile-sub">{gastosKpis.mayor ? `${fmt(gastosKpis.mayor.montoARS)} · ${gastosKpis.mayor.medio}` : ""}</div>
-                    </div>
-                  </div>
+                    ))}
+                  </section>
 
-                  <div className="two-col">
-                    <section className="card">
-                      <div className="card-head"><h2>En qué gasto</h2></div>
-                      {gastosKpis.porCat.length === 0 ? (
-                        <div className="empty-hint">Sin gastos en el mes.</div>
-                      ) : (
-                        <div className="chart-box" style={{ height: 260, marginBottom: 0 }}><canvas ref={gastosDonutRef}></canvas></div>
+                  <section className="card">
+                    <div className="card-head-row">
+                      <h2>Evolución de gastos</h2>
+                      {gastosKpis.tendencia && (
+                        <span className={`badge ${gastosKpis.tendencia.texto === "en alza" ? "badge-info" : "badge-neutral"}`}>
+                          Tendencia {gastosKpis.tendencia.texto} ({gastosKpis.tendencia.dif > 0 ? "+" : ""}{Math.round(gastosKpis.tendencia.dif * 100)}%)
+                        </span>
                       )}
-                    </section>
-                    <section className="card">
-                      <div className="card-head"><h2>Con qué pago</h2></div>
-                      {gastosKpis.porMedio.map(([medio, monto]) => (
-                        <div className="cat-block" key={medio} style={{ padding: "8px 0" }}>
-                          <div className="cat-head">
-                            <span className="cat-name">{medio}</span>
-                            <span className="cat-total">{fmt(monto)}</span>
-                          </div>
-                          <div className="cat-bar" style={{ marginBottom: 0 }}><span style={{ width: `${gastosKpis.total ? (monto / gastosKpis.total) * 100 : 0}%` }}></span></div>
-                        </div>
-                      ))}
-                    </section>
-                  </div>
+                    </div>
+                    <div className="chart-box" style={{ height: 240, marginBottom: 8 }}><canvas ref={gastosDashRef}></canvas></div>
+                    <p className="hint" style={{ margin: 0 }}>
+                      Línea punteada: promedio de {gastosKpis.serie.length} meses ({fmt(gastosKpis.promedio)}).
+                      {gastosKpis.tendencia ? " Tendencia: últimos 3 meses contra los 3 anteriores." : ""}
+                    </p>
+                  </section>
 
                   <section className="card">
                     <div className="card-head"><h2>Los 5 gastos más grandes del mes</h2></div>
                     {gastosKpis.top5.map((g, i) => (
-                      <div className="cat-item" key={i}>
-                        <div className="cat-item-left">
-                          <span className="badge badge-neutral">{i + 1}</span>
-                          <span className="strong">{g.desc}</span>
-                          <span className="cat-item-medio">{g.medio} · {g.categoria}</span>
+                      <div className="top-gasto" key={i}>
+                        <div>
+                          <div className="strong">{g.desc}</div>
+                          <div className="cat-item-medio">{g.categoria} · {g.medio}</div>
+                          {g.detalle === "Fijo"
+                            ? <span className="badge badge-neutral">Fijo</span>
+                            : Number(g.cuotasTotales) > 1 && <span className="badge badge-info">{g.cuotaNumero}/{g.cuotasTotales} cuotas</span>}
                         </div>
-                        <div className="cat-item-monto">{fmt(g.montoARS)}</div>
+                        <div className="cat-item-monto strong">{fmt(g.montoARS)}</div>
+                      </div>
+                    ))}
+                  </section>
+
+                  <section className="card compact-card">
+                    <div className="subsection-title" style={{ margin: "0 0 8px" }}>Medios de pago</div>
+                    {gastosKpis.medios.map(([medio, monto]) => (
+                      <div className="medio-row" key={medio}>
+                        <span>{medio}</span>
+                        <span>{fmt(monto)} <span className="muted">· {gastosKpis.total ? Math.round((monto / gastosKpis.total) * 100) : 0}%</span></span>
                       </div>
                     ))}
                   </section>
