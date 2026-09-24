@@ -308,26 +308,17 @@ export default function Home() {
 
   useEffect(() => {
     if (!canvasRef.current || tab !== "resumen") return;
-    const labels = meses.map((m) => m.label);
-    const ingresos = meses.map((m) => m.ingresos);
-    const gastos = meses.map((m) => m.gastos);
-    const ahorro = meses.map((m) => m.ahorroProyectado);
-    const ahorroRealSerie = meses.map((m) => (m.ahorroReal ? m.ahorroReal.montoARS : null));
-    const hayAhorroReal = ahorroRealSerie.some((v) => v !== null);
-    const fmtCorto = (n) => "$" + (Math.abs(n) >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.round(n / 1000) + "k");
-
     if (chartRef.current) chartRef.current.destroy();
+    if (!meses.length) return;
+    const fmtCorto = (n) => "$" + (Math.abs(n) >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.round(n / 1000) + "k");
     chartRef.current = new Chart(canvasRef.current.getContext("2d"), {
       data: {
-        labels,
+        labels: meses.map((m) => m.label),
         datasets: [
-          { type: "bar", label: "Ingresos", data: ingresos, backgroundColor: "#0a8a3d", borderRadius: 6, barPercentage: 0.6 },
-          { type: "bar", label: "Gastos", data: gastos, backgroundColor: "#7a0c2e", borderRadius: 6, barPercentage: 0.6 },
-          { type: "line", label: "Ahorro proyectado", data: ahorro, borderColor: "#1c1c1e", backgroundColor: "#1c1c1e", tension: 0.35, borderWidth: 3, pointRadius: 4, pointBackgroundColor: "#1c1c1e" },
-          ...(hayAhorroReal ? [{
-            type: "line", label: "Ahorro real", data: ahorroRealSerie, borderColor: "#b8720a", backgroundColor: "#b8720a",
-            borderDash: [6, 4], tension: 0.35, borderWidth: 3, pointRadius: 4, pointBackgroundColor: "#b8720a", spanGaps: false
-          }] : [])
+          { type: "bar", label: "Ingresos", data: meses.map((m) => m.ingresos), backgroundColor: "#bfe3cc", borderRadius: 6, barPercentage: 0.7 },
+          { type: "bar", label: "Gastos", data: meses.map((m) => m.gastos), backgroundColor: "#7a0c2e", borderRadius: 6, barPercentage: 0.7 },
+          { type: "line", label: "Ahorro proyectado", data: meses.map((m) => m.ahorroProyectado), borderColor: "#1c1c1e", backgroundColor: "#1c1c1e", tension: 0.3, borderWidth: 3, pointRadius: 4 },
+          { type: "line", label: "Piso configurado", data: meses.map((m) => m.pisoConfigurado), borderColor: "#9ca3af", borderDash: [6, 4], borderWidth: 2, pointRadius: 0 }
         ]
       },
       options: {
@@ -337,7 +328,7 @@ export default function Home() {
         plugins: {
           legend: { position: "top", labels: { font: { size: 12.5, family: "inherit" }, usePointStyle: true, padding: 16, boxHeight: 8 } },
           tooltip: {
-            padding: 12, cornerRadius: 8, titleFont: { size: 13, family: "inherit" }, bodyFont: { size: 13, family: "inherit" },
+            padding: 12, cornerRadius: 8,
             callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` }
           }
         },
@@ -887,9 +878,46 @@ export default function Home() {
 
   // mesesBase[0] es siempre el mes calendario siguiente al de hoy (mismo criterio que mesObjetivo).
   const mesActualData = mesesBase[0] || null;
-  const porCuentaMesActual = (porCuenta && mesActualData)
-    ? porCuenta.meses.find((m) => m.key === mesActualData.key) || null
+  // ---- Proyección: mes de resumen = primer mes de la proyección mostrada ----
+  const mesSel = meses[0] || null;
+  const porCuentaMesActual = (porCuenta && mesSel)
+    ? porCuenta.meses.find((m) => m.key === mesSel.key) || null
     : null;
+  const estadoMes = (m) => {
+    if (m.margen < 0) return { id: "deficit", texto: "Déficit" };
+    if (m.piso < m.pisoConfigurado) return { id: "ajustado", texto: "Piso ajustado" };
+    if (m.ahorroProyectado > 0) return { id: "ok", texto: "Piso cubierto" };
+    return { id: "justo", texto: "Justo en el piso" };
+  };
+
+  // Alertas objetivas, calculadas solo con los números de la proyección mostrada.
+  const alertasProy = useMemo(() => {
+    const lista = [];
+    if (meses.length < 2) return lista;
+    const promG = meses.reduce((acc, m) => acc + m.gastos, 0) / meses.length;
+    meses.forEach((m, i) => {
+      const prev = i > 0 ? meses[i - 1] : null;
+      if (m.margen < 0) {
+        lista.push({ nivel: "crit", mes: m.label, texto: `Los gastos superan a los ingresos por ${fmt(-m.margen)}.` });
+      } else if (m.piso < m.pisoConfigurado) {
+        lista.push({ nivel: "warn", mes: m.label, texto: `No se alcanza el piso: quedan ${fmt(m.margen)} de los ${fmt(m.pisoConfigurado)} configurados.` });
+      }
+      if (promG && m.gastos > promG * 1.15) {
+        lista.push({ nivel: "warn", mes: m.label, texto: `Gastos ${Math.round((m.gastos / promG - 1) * 100)}% por encima del promedio de estos meses (${fmt(promG)}).` });
+      }
+      if (prev && prev.gastos - m.gastos >= 100000 && (prev.gastos - m.gastos) / prev.gastos >= 0.15) {
+        lista.push({ nivel: "ok", mes: m.label, texto: `Bajan los gastos ${fmt(prev.gastos - m.gastos)} respecto de ${prev.label}: terminan cuotas.` });
+      }
+      if (prev && m.ahorroProyectado - prev.ahorroProyectado >= 100000) {
+        lista.push({ nivel: "ok", mes: m.label, texto: `Sube el ahorro proyectado ${fmt(m.ahorroProyectado - prev.ahorroProyectado)} respecto de ${prev.label}.` });
+      }
+      if (m.aguinaldo > 0) {
+        lista.push({ nivel: "info", mes: m.label, texto: `Ingresa aguinaldo (${fmt(m.aguinaldo)}).` });
+      }
+    });
+    return lista;
+  }, [meses]);
+
 
   return (
     <div className="app-shell">
@@ -931,105 +959,165 @@ export default function Home() {
       <main className="content">
         {tab === "resumen" && (
           <div className="stack">
-            <div className="two-col">
-              <section className="card">
-                <div className="card-head">
-                  <h2>Piso de ahorro</h2>
-                </div>
-                <div className="field-row">
-                  <div className="field">
-                    <label>Piso disponible (siempre libre)</label>
-                    <input type="number" placeholder="300000" value={cfgPiso} onChange={(e) => setCfgPiso(e.target.value)} />
-                  </div>
-                  <div className="field field-action">
-                    <button className="btn-primary" onClick={guardarConfig}>Guardar</button>
-                  </div>
-                </div>
-                {cfgStatus && <div className="status">{cfgStatus}</div>}
-              </section>
-
-              <section className="card">
-                <div className="card-head-row">
-                  <h2>Resumen de {mesActualData ? mesActualData.label : "..."}</h2>
-                  <button className="section-link" onClick={() => setTab("cuotas")}>Ver detalle →</button>
-                </div>
-                {!mesActualData ? (
-                  <div className="empty-hint">Cargando...</div>
-                ) : (
-                  <>
-                    {porCuentaMesActual && Object.entries(porCuentaMesActual.cuentas).length > 0 &&
-                      Object.entries(porCuentaMesActual.cuentas)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([nombre, monto]) => (
-                          <div className="mini-tarjeta-row" key={nombre}>
-                            <div className="mini-tarjeta-left">
-                              <span className="tarjeta-avatar">{iniciales(nombre)}</span>
-                              <div className="mini-tarjeta-name">Total {nombre}</div>
-                            </div>
-                            <div className="mini-tarjeta-amount">{fmt(monto)}</div>
-                          </div>
-                        ))}
-                    <div className="mini-tarjeta-row">
-                      <div className="mini-tarjeta-name strong">Total gastos</div>
-                      <div className="mini-tarjeta-amount neg">{fmt(mesActualData.gastos)}</div>
-                    </div>
-                    <div className="mini-tarjeta-row">
-                      <div className="mini-tarjeta-name">Piso</div>
-                      <div className="mini-tarjeta-amount muted">{fmt(mesActualData.piso)}</div>
-                    </div>
-                    <div className="mini-tarjeta-row">
-                      <div className="mini-tarjeta-name strong">Restante (ahorro proyectado)</div>
-                      <div className={`mini-tarjeta-amount strong ${mesActualData.ahorroProyectado >= 0 ? "pos" : "neg"}`}>
-                        {fmt(mesActualData.ahorroProyectado)}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </section>
-            </div>
-
             <section className="card">
-              <div className="card-head-row">
-                <h2>Proyección</h2>
+              <div className="card-head-row" style={{ marginBottom: 0 }}>
+                <div>
+                  <h2>Proyección financiera</h2>
+                  <p className="hint" style={{ margin: "4px 0 0" }}>
+                    Si sigo con mis ingresos y compromisos actuales, así voy a estar los próximos meses.
+                  </p>
+                </div>
                 <div className="filtro-inline">
-                  <select value={filtroMes} onChange={(e) => setFiltroMes(Number(e.target.value))}>
+                  <button className="btn-icon" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, -1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>‹</button>
+                  <select value={filtroMes} onChange={(e) => { setFiltroMes(Number(e.target.value)); verPeriodo(Number(e.target.value), filtroAnio); }}>
                     {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
                   </select>
-                  <input type="number" className="anio-input" value={filtroAnio} onChange={(e) => setFiltroAnio(Number(e.target.value))} />
-                  <button className="btn-secondary" onClick={() => verPeriodo()}>Ver</button>
+                  <select value={filtroAnio} onChange={(e) => { setFiltroAnio(Number(e.target.value)); verPeriodo(filtroMes, Number(e.target.value)); }}>
+                    {Array.from({ length: 6 }, (_, i) => hoy.getFullYear() - 2 + i).map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <button className="btn-icon" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, 1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>›</button>
                   <button className="btn-ghost" onClick={verHoy}>Hoy</button>
                 </div>
               </div>
+            </section>
 
-              <div className="chart-box">
-                <canvas ref={canvasRef}></canvas>
-              </div>
+            {mesSel && (() => {
+              const est = estadoMes(mesSel);
+              const base = Math.max(mesSel.ingresos, mesSel.gastos, 1);
+              return (
+                <section className="card">
+                  <div className="card-head-row">
+                    <h2>{MESES_NOMBRE[mesSel.month]} {mesSel.year}</h2>
+                    <span className={`estado-chip estado-${est.id}`}>{est.texto}</span>
+                  </div>
+                  <div className="ahorro-hero">
+                    <div className="stat-tile-label">Ahorro proyectado</div>
+                    <div className="ahorro-hero-value">{fmt(mesSel.ahorroProyectado)}</div>
+                    <div className="stat-tile-sub">
+                      {est.id === "deficit" && `Los gastos superan a los ingresos por ${fmt(-mesSel.margen)}.`}
+                      {est.id === "ajustado" && `No alcanza para el piso de ${fmt(mesSel.pisoConfigurado)}: el piso se ajusta a ${fmt(mesSel.piso)}.`}
+                      {est.id === "ok" && `Es lo que queda por encima de tu piso de ${fmt(mesSel.pisoConfigurado)}.`}
+                      {est.id === "justo" && `Queda exactamente tu piso de ${fmt(mesSel.pisoConfigurado)}.`}
+                    </div>
+                  </div>
 
+                  <div className="flow-bar">
+                    <span style={{ width: `${(Math.min(mesSel.gastos, base) / base) * 100}%`, background: "#7a0c2e" }}></span>
+                    <span style={{ width: `${(mesSel.piso / base) * 100}%`, background: "#9ca3af" }}></span>
+                    <span style={{ width: `${(mesSel.ahorroProyectado / base) * 100}%`, background: "#0a8a3d" }}></span>
+                  </div>
+                  <div className="flow-legend">
+                    <span><i style={{ background: "#7a0c2e" }}></i>Gastos</span>
+                    <span><i style={{ background: "#9ca3af" }}></i>Piso</span>
+                    <span><i style={{ background: "#0a8a3d" }}></i>Ahorro</span>
+                  </div>
+
+                  <div className="proy-stats">
+                    <div><div className="stat-tile-label">Ingresos</div><div className="proy-stat-value pos">{fmt(mesSel.ingresos)}</div>
+                      {(mesSel.aguinaldo > 0 || mesSel.ingresoExtra > 0) && (
+                        <div className="subnote">
+                          {mesSel.aguinaldo > 0 ? `incl. aguinaldo ${fmt(mesSel.aguinaldo)}` : ""} {mesSel.ingresoExtra > 0 ? `incl. extra ${fmt(mesSel.ingresoExtra)}` : ""}
+                        </div>
+                      )}
+                    </div>
+                    <div><div className="stat-tile-label">Gastos proyectados</div><div className="proy-stat-value neg">{fmt(mesSel.gastos)}</div></div>
+                    <div><div className="stat-tile-label">Piso</div><div className="proy-stat-value">{fmt(mesSel.piso)}</div>
+                      {mesSel.piso < mesSel.pisoConfigurado && <div className="subnote">config. {fmt(mesSel.pisoConfigurado)}</div>}
+                    </div>
+                    <div><div className="stat-tile-label">Margen</div><div className={`proy-stat-value ${mesSel.margen < 0 ? "neg" : ""}`}>{fmt(mesSel.margen)}</div>
+                      <div className="subnote">ingresos − gastos</div>
+                    </div>
+                  </div>
+
+                  <div className="porque">
+                    <span className="muted">Por qué ese gasto:</span>{" "}
+                    Fijos <strong>{fmt(mesSel.gastoFijo)}</strong> ({mesSel.gastos ? Math.round((mesSel.gastoFijo / mesSel.gastos) * 100) : 0}%)
+                    {" · "}Cuotas y compras <strong>{fmt(mesSel.gastoVariable)}</strong> ({mesSel.gastos ? Math.round((mesSel.gastoVariable / mesSel.gastos) * 100) : 0}%)
+                  </div>
+                  {porCuentaMesActual && Object.keys(porCuentaMesActual.cuentas).length > 0 && (
+                    <div className="porque muted" style={{ fontSize: 12 }}>
+                      Por cuenta: {Object.entries(porCuentaMesActual.cuentas).sort((a, b) => b[1] - a[1]).map(([n, v]) => `${n} ${fmt(v)}`).join(" · ")}
+                    </div>
+                  )}
+                  <button className="section-link" style={{ marginTop: 12 }} onClick={() => { setGastosMesFiltro({ month: mesSel.month, year: mesSel.year }); abrirTab("gastos"); }}>
+                    Ver detalle de gastos →
+                  </button>
+                </section>
+              );
+            })()}
+
+            <section className="card">
+              <div className="card-head"><h2>Evolución de los próximos meses</h2></div>
+              <div className="chart-box"><canvas ref={canvasRef}></canvas></div>
+            </section>
+
+            {alertasProy.length > 0 && (
+              <section className="card">
+                <div className="card-head"><h2>Meses a mirar</h2></div>
+                {alertasProy.slice(0, 8).map((a, i) => (
+                  <div className={`alerta-row alerta-${a.nivel}`} key={i}>
+                    <span className="alerta-icon">{a.nivel === "ok" ? "✓" : (a.nivel === "info" ? "ℹ" : "⚠")}</span>
+                    <div><strong>{a.mes}</strong> — {a.texto}</div>
+                  </div>
+                ))}
+                {alertasProy.length > 8 && <p className="hint" style={{ margin: "8px 0 0" }}>y {alertasProy.length - 8} más en la tabla de abajo.</p>}
+              </section>
+            )}
+
+            <section className="card">
+              <div className="card-head"><h2>Situación mes a mes</h2></div>
               <div className="table-scroll">
                 <table>
                   <thead>
-                    <tr><th>Mes</th><th className="num">Ingresos</th><th className="num">Gastos</th><th className="num">Piso</th><th className="num">Ahorro proyectado</th></tr>
+                    <tr>
+                      <th>Mes</th><th className="num">Ingresos</th><th className="num">Gastos</th>
+                      <th className="num">Piso</th><th className="num">Margen</th><th className="num">Ahorro proyectado</th>
+                    </tr>
                   </thead>
                   <tbody>
-                    {meses.map((mo) => (
-                      <tr key={mo.key}>
-                        <td className="strong">{mo.label}</td>
-                        <td className="num pos">
-                          {fmt(mo.ingresos)}
-                          {mo.aguinaldo > 0 && <div className="subnote">incl. aguinaldo {fmt(mo.aguinaldo)}</div>}
-                          {mo.ingresoExtra > 0 && <div className="subnote">incl. extra {fmt(mo.ingresoExtra)}</div>}
-                        </td>
-                        <td className="num neg">{fmt(mo.gastos)}</td>
-                        <td className="num muted">
-                          {fmt(mo.piso)}
-                          {mo.piso < mo.pisoConfigurado && <div className="subnote">ajustado (config. {fmt(mo.pisoConfigurado)})</div>}
-                        </td>
-                        <td className={`num strong ${mo.ahorroProyectado >= 0 ? "pos" : "neg"}`}>{fmt(mo.ahorroProyectado)}</td>
-                      </tr>
-                    ))}
+                    {meses.map((mo) => {
+                      const est = estadoMes(mo);
+                      return (
+                        <tr key={mo.key} className={est.id === "deficit" ? "row-deficit" : (est.id === "ajustado" ? "row-ajustado" : "")}>
+                          <td className="strong">{mo.label}</td>
+                          <td className="num pos">
+                            {fmt(mo.ingresos)}
+                            {mo.aguinaldo > 0 && <div className="subnote">incl. aguinaldo {fmt(mo.aguinaldo)}</div>}
+                            {mo.ingresoExtra > 0 && <div className="subnote">incl. extra {fmt(mo.ingresoExtra)}</div>}
+                          </td>
+                          <td className="num neg">{fmt(mo.gastos)}</td>
+                          <td className="num muted">
+                            {fmt(mo.piso)}
+                            {mo.piso < mo.pisoConfigurado && <div className="subnote">ajustado (config. {fmt(mo.pisoConfigurado)})</div>}
+                          </td>
+                          <td className={`num ${mo.margen < 0 ? "neg" : "muted"}`}>{fmt(mo.margen)}</td>
+                          <td className={`num ahorro-cell ${mo.ahorroProyectado > 0 ? "pos" : "muted"}`}>{fmt(mo.ahorroProyectado)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
+            </section>
+
+            <section className="card config-card">
+              <div className="card-head-row" style={{ marginBottom: 6 }}>
+                <h2>⚙ Piso de ahorro</h2>
+              </div>
+              <p className="hint" style={{ margin: "0 0 12px" }}>
+                El monto mínimo que quiero conservar disponible. El ahorro proyectado es lo que queda de
+                ingresos − gastos después de reservar este piso; si no alcanza, el piso se ajusta a lo que hay.
+              </p>
+              <div className="field-row">
+                <div className="field">
+                  <label>Piso disponible (siempre libre)</label>
+                  <input type="number" placeholder="400000" value={cfgPiso} onChange={(e) => setCfgPiso(e.target.value)} />
+                </div>
+                <div className="field field-action">
+                  <button className="btn-primary" onClick={guardarConfig}>Guardar</button>
+                </div>
+              </div>
+              {cfgStatus && <div className="status">{cfgStatus}</div>}
             </section>
           </div>
         )}

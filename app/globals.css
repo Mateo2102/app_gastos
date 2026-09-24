@@ -554,3 +554,36 @@ tbody tr:hover { background: var(--surface-alt); }
 .compact-card { padding: 14px 18px; }
 .medio-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12.5px; color: var(--text-muted); }
 .medio-row span:last-child { font-variant-numeric: tabular-nums; color: var(--text); }
+
+/* ---------- Proyección ---------- */
+
+.estado-chip { padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 800; }
+.estado-ok { background: var(--green-soft); color: var(--green); }
+.estado-justo { background: #f1f1f4; color: var(--text-muted); }
+.estado-ajustado { background: var(--amber-soft); color: var(--amber); }
+.estado-deficit { background: var(--red-soft); color: var(--red); }
+
+.ahorro-hero { margin-bottom: 14px; }
+.ahorro-hero-value { font-size: 42px; font-weight: 800; letter-spacing: -0.02em; margin-top: 2px; }
+
+.flow-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--surface-alt); }
+.flow-bar > span { display: block; height: 100%; }
+.flow-legend { display: flex; gap: 16px; margin: 8px 0 16px; font-size: 12px; color: var(--text-muted); }
+.flow-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+
+.proy-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 14px; }
+.proy-stat-value { font-size: 20px; font-weight: 800; margin-top: 3px; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.porque { font-size: 13.5px; margin-top: 6px; }
+
+.alerta-row { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border-radius: var(--radius-sm); margin-bottom: 6px; font-size: 13.5px; }
+.alerta-icon { font-weight: 800; }
+.alerta-crit { background: var(--red-soft); color: var(--red-dark); }
+.alerta-warn { background: var(--amber-soft); color: var(--amber); }
+.alerta-ok { background: var(--green-soft); color: var(--green); }
+.alerta-info { background: var(--surface-alt); color: var(--text-muted); }
+
+.row-deficit td { background: #fdf3f5; }
+.row-ajustado td { background: #fffaf0; }
+.ahorro-cell { font-size: 15px; font-weight: 800; }
+
+.config-card { background: var(--surface-alt); border-style: dashed; box-shadow: none; }
