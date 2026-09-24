@@ -517,3 +517,10 @@ tbody tr:hover { background: var(--surface-alt); }
 .top-mes-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
 .top-mes-cat { font-weight: 700; margin-top: 4px; }
 .top-mes-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+/* ---------- Gastos: dashboard de KPIs ---------- */
+
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
+.kpi { padding: 16px 18px; }
+.kpi-up { color: var(--red); font-weight: 700; }
+.kpi-down { color: var(--green); font-weight: 700; }

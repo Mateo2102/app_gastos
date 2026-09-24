@@ -198,6 +198,7 @@ export default function Home() {
   const [gastosMesFiltro, setGastosMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
   const [gastosHist, setGastosHist] = useState(null);
   const [gastosCat, setGastosCat] = useState("");
+  const [gastosVista, setGastosVista] = useState("detalle");
 
   // Pestaña "Histórico": mes de compra elegido y categoría.
   const [histMes, setHistMes] = useState({ month: hoy.getMonth(), year: hoy.getFullYear() });
@@ -213,6 +214,8 @@ export default function Home() {
   const ahorroChartRef = useRef(null);
   const gastosCanvasRef = useRef(null);
   const gastosChartRef = useRef(null);
+  const gastosDonutRef = useRef(null);
+  const gastosDonutChart = useRef(null);
   const histCanvasRef = useRef(null);
   const histChartRef = useRef(null);
 
@@ -645,7 +648,7 @@ export default function Home() {
         }
       }
     });
-  }, [evolutivo, tab]);
+  }, [evolutivo, tab, gastosVista]);
 
   // ---- Pestaña "Histórico": compras por fecha de compra, por categoría, más evolutivo ----
   const histRegistros = useMemo(() => {
@@ -654,7 +657,7 @@ export default function Home() {
       .filter((h) => h.gasto === "Gasto variable")
       .map((h) => {
         const [d, m, y] = String(h.fecha).split("/").map(Number);
-        return { ...h, dia: d, y, m: m - 1, categoriaG: h.categoria || "Sin categorizar", total: Number(h.totalARS) || 0 };
+        return { ...h, dia: d, y, m: m - 1, categoriaG: h.categoria || "Sin categorizar", total: Number(h.montoARS) || 0 }; // valor de la cuota (= total si es un solo pago)
       })
       .filter((h) => h.y);
   }, [historico]);
@@ -722,7 +725,7 @@ export default function Home() {
       data: {
         labels: histEvolutivo.map((m) => m.label),
         datasets: [
-          { label: "Total comprado", data: histEvolutivo.map((m) => m.total), borderColor: "#7a0c2e", backgroundColor: "#7a0c2e", tension: 0.3, borderWidth: 3, pointRadius: 4 },
+          { label: "Total (valor de cuota)", data: histEvolutivo.map((m) => m.total), borderColor: "#7a0c2e", backgroundColor: "#7a0c2e", tension: 0.3, borderWidth: 3, pointRadius: 4 },
           { label: "Categoría en la que más gasté", data: histEvolutivo.map((m) => (m.topCat ? m.topCat[1] : 0)), borderColor: "#b8720a", backgroundColor: "#b8720a", borderDash: [6, 4], tension: 0.3, borderWidth: 3, pointRadius: 4 }
         ]
       },
@@ -741,6 +744,55 @@ export default function Home() {
       }
     });
   }, [histEvolutivo, tab]);
+
+  // ---- Dashboard de gastos: KPIs del mes elegido ----
+  const gastosKpis = useMemo(() => {
+    if (gastosHist === null) return null;
+    const idx = gastosHist.findIndex((m) => m.key === `${gastosMesFiltro.year}-${gastosMesFiltro.month}`);
+    if (idx < 0) return null;
+    const suma = (items) => items.reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0);
+    const mo = gastosHist[idx];
+    const total = suma(mo.items);
+    const prev = idx > 0 ? suma(gastosHist[idx - 1].items) : null;
+    const fijos = suma(mo.items.filter((g) => g.detalle === "Fijo"));
+    const ultimos = gastosHist.slice(Math.max(0, idx - 5), idx + 1);
+    const promedio = ultimos.reduce((acc, m) => acc + suma(m.items), 0) / ultimos.length;
+    const comprometido = gastosHist.slice(idx + 1).reduce((acc, m) => acc + suma(m.items.filter((g) => g.detalle !== "Fijo")), 0);
+    const agrupar = (keyFn) => {
+      const t = {};
+      mo.items.forEach((g) => { const k = keyFn(g); t[k] = (t[k] || 0) + (Number(g.montoARS) || 0); });
+      return Object.entries(t).sort((a, b) => b[1] - a[1]);
+    };
+    const ing = (meses.find((m) => m.key === mo.key) || mesesBase.find((m) => m.key === mo.key))?.ingresos ?? null;
+    const top = [...mo.items].sort((a, b) => b.montoARS - a.montoARS);
+    return {
+      label: mo.label, total, prev, fijos, cuotas: total - fijos, promedio, comprometido,
+      ingresos: ing, porCat: agrupar((g) => g.categoria), porMedio: agrupar((g) => g.medio),
+      top5: top.slice(0, 5), mayor: top[0] || null, cantidad: mo.items.length
+    };
+  }, [gastosHist, gastosMesFiltro, meses, mesesBase]);
+
+  useEffect(() => {
+    if (!gastosDonutRef.current || tab !== "gastos" || gastosVista !== "dashboard") return;
+    if (gastosDonutChart.current) gastosDonutChart.current.destroy();
+    if (!gastosKpis || !gastosKpis.porCat.length) return;
+    const colores = ["#7a0c2e", "#b8720a", "#0a8a3d", "#1c1c1e", "#3b82f6", "#a855f7", "#f43f5e", "#14b8a6", "#84cc16", "#94a3b8"];
+    gastosDonutChart.current = new Chart(gastosDonutRef.current.getContext("2d"), {
+      type: "doughnut",
+      data: {
+        labels: gastosKpis.porCat.map(([c]) => c),
+        datasets: [{ data: gastosKpis.porCat.map(([, v]) => v), backgroundColor: gastosKpis.porCat.map((_, i) => colores[i % colores.length]), borderWidth: 2, borderColor: "#fff" }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "right", labels: { usePointStyle: true, boxHeight: 8 } },
+          tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${fmt(ctx.parsed)}` } }
+        }
+      }
+    });
+  }, [gastosKpis, tab, gastosVista]);
 
   // Tenencia de ahorro: cada movimiento con su acumulado en la moneda en que se ahorró, y los
   // totales en pesos y en dólares (más su equivalente con el dólar blue vigente).
@@ -967,72 +1019,185 @@ export default function Home() {
                   <button className="btn-ghost" onClick={() => elegirMesGastos(mesObjetivo.month, mesObjetivo.year)}>Hoy</button>
                 </div>
               </div>
+              <div className="chips" style={{ marginBottom: 0 }}>
+                <button className={`chip ${gastosVista === "detalle" ? "active" : ""}`} onClick={() => setGastosVista("detalle")}>📋 Detalle</button>
+                <button className={`chip ${gastosVista === "dashboard" ? "active" : ""}`} onClick={() => setGastosVista("dashboard")}>📊 Dashboard</button>
+              </div>
+            </section>
 
-              {gastosItemsMes === null ? (
-                <div className="empty-hint">Cargando...</div>
-              ) : gastosCategorias.length === 0 ? (
-                <div className="empty-hint">No hay gastos en ese mes.</div>
+            {gastosVista === "dashboard" ? (
+              gastosKpis === null ? (
+                <section className="card"><div className="empty-hint">Cargando...</div></section>
               ) : (
                 <>
-                  <div className="chips">
-                    <button className={`chip ${gastosCatActiva === "" ? "active" : ""}`} onClick={() => setGastosCat("")}>Todas</button>
-                    {gastosCategorias.map(([tipo, total]) => (
-                      <button key={tipo} className={`chip ${gastosCatActiva === tipo ? "active" : ""}`} onClick={() => setGastosCat(tipo)}>
-                        {tipo} · {fmt(total)}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="hint" style={{ margin: "0 0 8px" }}>
-                    {gastosCantidadMes} gastos · total <span className="strong">{fmt(gastosTotalMes)}</span>
-                  </p>
-
-                  {gastosGrupos.map((gr) => (
-                    <div className="cat-block" key={gr.tipo}>
-                      <div className="cat-head">
-                        <span className="cat-name">{gr.tipo}</span>
-                        <span className="cat-total">{fmt(gr.total)}</span>
+                  <div className="kpi-grid">
+                    <div className="card kpi">
+                      <div className="stat-tile-label">Total del mes</div>
+                      <div className="stat-tile-value">{fmt(gastosKpis.total)}</div>
+                      <div className="stat-tile-sub">
+                        {gastosKpis.prev === null ? `${gastosKpis.cantidad} gastos` : (
+                          <span className={gastosKpis.total > gastosKpis.prev ? "kpi-up" : "kpi-down"}>
+                            {gastosKpis.total > gastosKpis.prev ? "▲" : "▼"} {fmt(Math.abs(gastosKpis.total - gastosKpis.prev))}
+                            {gastosKpis.prev ? ` (${Math.round(Math.abs(gastosKpis.total - gastosKpis.prev) / gastosKpis.prev * 100)}%)` : ""} vs mes anterior
+                          </span>
+                        )}
                       </div>
-                      <div className="cat-bar"><span style={{ width: `${gastosTotalMes ? (gr.total / gastosTotalMes) * 100 : 0}%` }}></span></div>
-                      {gr.items.map((g, i) => (
-                        <div className="cat-item" key={`${gr.tipo}-${i}`}>
-                          <div className="cat-item-left">
-                            <span className="strong">{g.desc}</span>
-                            <span className="cat-item-medio">{g.medio}</span>
-                            <span className={`badge ${g.detalle === "Fijo" ? "badge-neutral" : "badge-info"}`}>{g.detalle}</span>
+                    </div>
+                    <div className="card kpi">
+                      <div className="stat-tile-label">Gastos fijos</div>
+                      <div className="stat-tile-value">{fmt(gastosKpis.fijos)}</div>
+                      <div className="stat-tile-sub">{gastosKpis.total ? Math.round((gastosKpis.fijos / gastosKpis.total) * 100) : 0}% del total · se repite todos los meses</div>
+                    </div>
+                    <div className="card kpi">
+                      <div className="stat-tile-label">Compras en cuotas</div>
+                      <div className="stat-tile-value">{fmt(gastosKpis.cuotas)}</div>
+                      <div className="stat-tile-sub">{gastosKpis.total ? Math.round((gastosKpis.cuotas / gastosKpis.total) * 100) : 0}% del total</div>
+                    </div>
+                    <div className="card kpi">
+                      <div className="stat-tile-label">Sobre tus ingresos</div>
+                      <div className="stat-tile-value">
+                        {gastosKpis.ingresos ? `${Math.round((gastosKpis.total / gastosKpis.ingresos) * 100)}%` : "—"}
+                      </div>
+                      <div className="stat-tile-sub">
+                        {gastosKpis.ingresos ? `Ingresos del mes: ${fmt(gastosKpis.ingresos)}` : "Sin ingresos cargados para este mes"}
+                      </div>
+                    </div>
+                    <div className="card kpi">
+                      <div className="stat-tile-label">Promedio (últimos 6 meses)</div>
+                      <div className="stat-tile-value">{fmt(gastosKpis.promedio)}</div>
+                      <div className="stat-tile-sub">
+                        <span className={gastosKpis.total > gastosKpis.promedio ? "kpi-up" : "kpi-down"}>
+                          Este mes: {gastosKpis.total > gastosKpis.promedio ? "por encima" : "por debajo"} ({fmt(Math.abs(gastosKpis.total - gastosKpis.promedio))})
+                        </span>
+                      </div>
+                    </div>
+                    <div className="card kpi">
+                      <div className="stat-tile-label">Cuotas ya comprometidas</div>
+                      <div className="stat-tile-value">{fmt(gastosKpis.comprometido)}</div>
+                      <div className="stat-tile-sub">A pagar en los meses siguientes</div>
+                    </div>
+                    <div className="card kpi">
+                      <div className="stat-tile-label">Categoría principal</div>
+                      <div className="stat-tile-value" style={{ fontSize: 17 }}>{gastosKpis.porCat[0] ? gastosKpis.porCat[0][0] : "—"}</div>
+                      <div className="stat-tile-sub">
+                        {gastosKpis.porCat[0] ? `${fmt(gastosKpis.porCat[0][1])} · ${Math.round((gastosKpis.porCat[0][1] / gastosKpis.total) * 100)}% del total` : ""}
+                      </div>
+                    </div>
+                    <div className="card kpi">
+                      <div className="stat-tile-label">Mayor gasto</div>
+                      <div className="stat-tile-value" style={{ fontSize: 17 }}>{gastosKpis.mayor ? gastosKpis.mayor.desc : "—"}</div>
+                      <div className="stat-tile-sub">{gastosKpis.mayor ? `${fmt(gastosKpis.mayor.montoARS)} · ${gastosKpis.mayor.medio}` : ""}</div>
+                    </div>
+                  </div>
+
+                  <div className="two-col">
+                    <section className="card">
+                      <div className="card-head"><h2>En qué gasto</h2></div>
+                      {gastosKpis.porCat.length === 0 ? (
+                        <div className="empty-hint">Sin gastos en el mes.</div>
+                      ) : (
+                        <div className="chart-box" style={{ height: 260, marginBottom: 0 }}><canvas ref={gastosDonutRef}></canvas></div>
+                      )}
+                    </section>
+                    <section className="card">
+                      <div className="card-head"><h2>Con qué pago</h2></div>
+                      {gastosKpis.porMedio.map(([medio, monto]) => (
+                        <div className="cat-block" key={medio} style={{ padding: "8px 0" }}>
+                          <div className="cat-head">
+                            <span className="cat-name">{medio}</span>
+                            <span className="cat-total">{fmt(monto)}</span>
                           </div>
-                          <div className="cat-item-monto">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</div>
+                          <div className="cat-bar" style={{ marginBottom: 0 }}><span style={{ width: `${gastosKpis.total ? (monto / gastosKpis.total) * 100 : 0}%` }}></span></div>
                         </div>
                       ))}
-                    </div>
-                  ))}
-                </>
-              )}
-            </section>
+                    </section>
+                  </div>
 
-            <section className="card">
-              <div className="card-head">
-                <h2>Evolutivo de gastos</h2>
-              </div>
-              {evolutivo.length === 0 ? (
-                <div className="empty-hint">Cargando...</div>
-              ) : (
-                <>
-                  <div className="chart-box"><canvas ref={gastosCanvasRef}></canvas></div>
-                  <div className="subsection-title">En qué más gasté cada mes</div>
-                  <div className="top-mes-grid">
-                    {evolutivo.map((m) => (
-                      <div className="top-mes" key={m.key}>
-                        <div className="top-mes-label">{m.label}</div>
-                        <div className="top-mes-cat">{m.topCat ? `${m.topCat[0]} · ${fmt(m.topCat[1])}` : "—"}</div>
-                        <div className="top-mes-sub">
-                          {m.topItem ? `Mayor gasto: ${m.topItem.desc} (${fmt(m.topItem.montoARS)})` : "Sin gastos"}
+                  <section className="card">
+                    <div className="card-head"><h2>Los 5 gastos más grandes del mes</h2></div>
+                    {gastosKpis.top5.map((g, i) => (
+                      <div className="cat-item" key={i}>
+                        <div className="cat-item-left">
+                          <span className="badge badge-neutral">{i + 1}</span>
+                          <span className="strong">{g.desc}</span>
+                          <span className="cat-item-medio">{g.medio} · {g.categoria}</span>
                         </div>
+                        <div className="cat-item-monto">{fmt(g.montoARS)}</div>
                       </div>
                     ))}
-                  </div>
+                  </section>
                 </>
-              )}
-            </section>
+              )
+            ) : (
+              <>
+                <section className="card">
+                  {gastosItemsMes === null ? (
+                    <div className="empty-hint">Cargando...</div>
+                  ) : gastosCategorias.length === 0 ? (
+                    <div className="empty-hint">No hay gastos en ese mes.</div>
+                  ) : (
+                    <>
+                      <div className="chips">
+                        <button className={`chip ${gastosCatActiva === "" ? "active" : ""}`} onClick={() => setGastosCat("")}>Todas</button>
+                        {gastosCategorias.map(([tipo, total]) => (
+                          <button key={tipo} className={`chip ${gastosCatActiva === tipo ? "active" : ""}`} onClick={() => setGastosCat(tipo)}>
+                            {tipo} · {fmt(total)}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="hint" style={{ margin: "0 0 8px" }}>
+                        {gastosCantidadMes} gastos · total <span className="strong">{fmt(gastosTotalMes)}</span>
+                      </p>
+
+                      {gastosGrupos.map((gr) => (
+                        <div className="cat-block" key={gr.tipo}>
+                          <div className="cat-head">
+                            <span className="cat-name">{gr.tipo}</span>
+                            <span className="cat-total">{fmt(gr.total)}</span>
+                          </div>
+                          <div className="cat-bar"><span style={{ width: `${gastosTotalMes ? (gr.total / gastosTotalMes) * 100 : 0}%` }}></span></div>
+                          {gr.items.map((g, i) => (
+                            <div className="cat-item" key={`${gr.tipo}-${i}`}>
+                              <div className="cat-item-left">
+                                <span className="strong">{g.desc}</span>
+                                <span className="cat-item-medio">{g.medio}</span>
+                                <span className={`badge ${g.detalle === "Fijo" ? "badge-neutral" : "badge-info"}`}>{g.detalle}</span>
+                              </div>
+                              <div className="cat-item-monto">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </section>
+
+                <section className="card">
+                  <div className="card-head">
+                    <h2>Evolutivo de gastos</h2>
+                  </div>
+                  {evolutivo.length === 0 ? (
+                    <div className="empty-hint">Cargando...</div>
+                  ) : (
+                    <>
+                      <div className="chart-box"><canvas ref={gastosCanvasRef}></canvas></div>
+                      <div className="subsection-title">En qué más gasté cada mes</div>
+                      <div className="top-mes-grid">
+                        {evolutivo.map((m) => (
+                          <div className="top-mes" key={m.key}>
+                            <div className="top-mes-label">{m.label}</div>
+                            <div className="top-mes-cat">{m.topCat ? `${m.topCat[0]} · ${fmt(m.topCat[1])}` : "—"}</div>
+                            <div className="top-mes-sub">
+                              {m.topItem ? `Mayor gasto: ${m.topItem.desc} (${fmt(m.topItem.montoARS)})` : "Sin gastos"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </section>
+              </>
+            )}
           </div>
         )}
 
@@ -1551,9 +1716,9 @@ export default function Home() {
                             <span className="cat-item-medio">{String(h.dia).padStart(2, "0")}/{String(h.m + 1).padStart(2, "0")}</span>
                             <span className="strong">{h.desc}</span>
                             <span className="cat-item-medio">{h.medio}</span>
-                            {Number(h.cuotas) > 1 && <span className="badge badge-info">{h.cuotas} cuotas</span>}
+                            {Number(h.cuotas) > 1 && <span className="badge badge-info">{h.cuotas} cuotas · total {fmt(h.totalARS)}</span>}
                           </div>
-                          <div className="cat-item-monto">{celdaEquivalencia(h.moneda, h.totalARS, h.totalUSD)}</div>
+                          <div className="cat-item-monto">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</div>
                         </div>
                       ))}
                     </div>
@@ -1564,7 +1729,7 @@ export default function Home() {
 
             <section className="card">
               <div className="card-head">
-                <h2>Evolutivo de compras</h2>
+                <h2>Evolutivo de compras (valor de cuota)</h2>
               </div>
               {histEvolutivo.length === 0 ? (
                 <div className="empty-hint">Cargando...</div>
