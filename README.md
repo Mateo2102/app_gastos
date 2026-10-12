@@ -65,6 +65,8 @@ Abrí http://localhost:3000
   `getHistorico`).
 - `lib/logic.js`: toda la lógica de fechas de cierre, proyección mensual, dólar blue —
   portada 1:1 desde las funciones `_` del Apps Script original.
+- `lib/closing.js`: la regla de cierre de tarjeta (mes de sueldo con el que se paga cada compra).
+  Sin dependencias; `node lib/closing.test.mjs` corre los casos de prueba.
 - `lib/data.js`: lectura/escritura de la planilla vía Google Sheets API.
 - `lib/sheetsClient.js`: cliente autenticado + el almacén clave/valor en la pestaña
   `ConfigTablero` (reemplaza `PropertiesService`).
@@ -89,3 +91,18 @@ simple vista.
 Las compras que NO son con tarjeta de crédito (Transferencia/Efectivo, como préstamos) no pasan
 por el ciclo de cierre de ninguna tarjeta: sus cuotas arrancan directamente en el mes de la
 compra. En el tablero aparecen agrupadas en "El Banco", separadas de "Tarjetas".
+
+## Fecha de cierre de cada tarjeta
+
+En la pestaña **Tarjetas → Por tarjeta** se configura el día de cierre de cada banco (se guarda
+en `ConfigTablero`, clave `CIERRE_DIAS`). Para compras con tarjeta de crédito:
+
+- Compra **antes** del día de cierre → se paga con el sueldo del mes siguiente.
+- Compra **el día del cierre o después** → se paga con el sueldo del mes subsiguiente.
+- Ej. (cierre el 20): 19/10 → noviembre; 20/10 → diciembre; 20/11 → enero.
+
+La fecha real de la compra no se modifica: el mes de pago se calcula al leer, a partir de la
+fecha y del cierre de la tarjeta, por eso cambiar el día de cierre reubica también los gastos ya
+cargados. Si un banco no tiene día configurado se sigue usando el jueves de cierre de la tabla
+Tarjeta/Cierre, y una fecha de cierre cargada a mano en una compra tiene prioridad sobre ambos.
+Efectivo, transferencias y préstamos no pasan por esta regla.
