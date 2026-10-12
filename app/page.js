@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
+import { mesPagoCredito, shiftMonthKey } from "@/lib/closing";
 
 const MESES_NOMBRE = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -9,15 +10,18 @@ const MESES_NOMBRE = [
 ];
 
 const TABS = [
-  { id: "resumen", label: "Resumen", icon: "📊" },
-  { id: "gastos", label: "Gastos", icon: "🧮" },
-  { id: "sueldo", label: "Sueldo", icon: "💵" },
-  { id: "ahorro", label: "Ahorro", icon: "🐷" },
-  { id: "tarjetas", label: "Tarjetas", icon: "💳" },
-  { id: "cuotas", label: "Cuotas activas", icon: "🧾" },
-  { id: "fijos", label: "Gastos fijos", icon: "📌" },
-  { id: "cargar", label: "Cargar / Simular", icon: "➕" },
-  { id: "historico", label: "Histórico", icon: "📜" }
+  { id: "inicio", label: "Inicio" },
+  { id: "proyeccion", label: "Proyección" },
+  { id: "gastos", label: "Gastos" },
+  { id: "tarjetas", label: "Tarjetas" },
+  { id: "ahorro", label: "Ahorro" }
+];
+
+// Qué se carga en el formulario: define la "clase" de fila en la planilla (columna A).
+const CLASES_CARGA = [
+  { gasto: "Gasto variable", titulo: "Compra", ayuda: "Un pago o en cuotas" },
+  { gasto: "Gasto fijo", titulo: "Gasto fijo", ayuda: "Se repite todos los meses" },
+  { gasto: "Ingreso extra", titulo: "Ingreso extra", ayuda: "Plata que entra una vez" }
 ];
 
 const FORMA_TARJETA = "Tarjeta de Crédito";
@@ -100,42 +104,49 @@ async function fetchJSON(url, opts) {
   return resp.json();
 }
 
-// Campos de "cómo se pagó" reutilizados por el form de carga y el simulador.
-function CamposPago({ form, setForm, opciones }) {
+// Control segmentado: una fila de opciones excluyentes (reemplaza selects de pocas opciones).
+function Segmented({ value, onChange, options }) {
   return (
-    <div className="pago-fields">
-      <label>Forma de pago</label>
-      <select value={form.formaPago} onChange={(e) => setForm({ ...form, formaPago: e.target.value })}>
-        {opciones.formasPago.map((v) => <option key={v}>{v}</option>)}
-      </select>
-
-      {form.formaPago !== "Efectivo" && (
-        <>
-          <label>Banco (opcional)</label>
-          <select value={form.banco} onChange={(e) => setForm({ ...form, banco: e.target.value })}>
-            <option value="">— Ninguno —</option>
-            {opciones.bancos.map((v) => <option key={v}>{v}</option>)}
-          </select>
-        </>
-      )}
-
-      {form.formaPago === FORMA_TARJETA && (
-        <>
-          <label>Marca de la tarjeta</label>
-          <select value={form.marca} onChange={(e) => setForm({ ...form, marca: e.target.value })}>
-            {opciones.marcas.map((v) => <option key={v}>{v}</option>)}
-          </select>
-
-          <label>Fecha de cierre de esta compra (opcional)</label>
-          <input type="date" value={form.fechaCierre} onChange={(e) => setForm({ ...form, fechaCierre: e.target.value })} />
-          <p className="hint" style={{ margin: "4px 0 12px" }}>
-            Si la cargás, el tablero calcula las cuotas a partir de esta fecha exacta en vez de
-            inferir el jueves de cierre — evita discrepancias con el resumen real de la tarjeta.
-          </p>
-        </>
-      )}
+    <div className="segmented">
+      {options.map((o) => {
+        const v = typeof o === "string" ? o : o.value;
+        const label = typeof o === "string" ? o : o.label;
+        return (
+          <button key={v} type="button" className={`seg ${value === v ? "active" : ""}`} onClick={() => onChange(v)}>
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
+}
+
+// Alertas objetivas, calculadas solo con los números de la proyección que se le pase.
+function calcAlertas(meses) {
+  const lista = [];
+  if (meses.length < 2) return lista;
+  const promG = meses.reduce((acc, m) => acc + m.gastos, 0) / meses.length;
+  meses.forEach((m, i) => {
+    const prev = i > 0 ? meses[i - 1] : null;
+    if (m.margen < 0) {
+      lista.push({ nivel: "crit", mes: m.label, texto: `Los gastos superan a los ingresos por ${fmt(-m.margen)}.` });
+    } else if (m.piso < m.pisoConfigurado) {
+      lista.push({ nivel: "warn", mes: m.label, texto: `No se alcanza el piso: quedan ${fmt(m.margen)} de los ${fmt(m.pisoConfigurado)} configurados.` });
+    }
+    if (promG && m.gastos > promG * 1.15) {
+      lista.push({ nivel: "warn", mes: m.label, texto: `Gastos ${Math.round((m.gastos / promG - 1) * 100)}% por encima del promedio de estos meses (${fmt(promG)}).` });
+    }
+    if (prev && prev.gastos - m.gastos >= 100000 && (prev.gastos - m.gastos) / prev.gastos >= 0.15) {
+      lista.push({ nivel: "ok", mes: m.label, texto: `Bajan los gastos ${fmt(prev.gastos - m.gastos)} respecto de ${prev.label}: terminan cuotas.` });
+    }
+    if (prev && m.ahorroProyectado - prev.ahorroProyectado >= 100000) {
+      lista.push({ nivel: "ok", mes: m.label, texto: `Sube el ahorro proyectado ${fmt(m.ahorroProyectado - prev.ahorroProyectado)} respecto de ${prev.label}.` });
+    }
+    if (m.aguinaldo > 0) {
+      lista.push({ nivel: "info", mes: m.label, texto: `Ingresa aguinaldo (${fmt(m.aguinaldo)}).` });
+    }
+  });
+  return lista;
 }
 
 export default function Home() {
@@ -145,7 +156,11 @@ export default function Home() {
   // el 01/10 pasa a verse noviembre).
   const mesObjetivo = shiftMes(hoy.getMonth(), hoy.getFullYear(), 1);
 
-  const [tab, setTab] = useState("resumen");
+  const [tab, setTab] = useState("inicio");
+  // Sub-vistas de cada pestaña agrupada.
+  const [proyVista, setProyVista] = useState("proyeccion"); // proyeccion | sueldo
+  const [tarjetasVista, setTarjetasVista] = useState("tarjeta"); // tarjeta | cuotas
+  const [inicioIdx, setInicioIdx] = useState(0); // posición dentro de mesesBase
 
   const [dolarBlue, setDolarBlue] = useState(0);
   const [meses, setMeses] = useState([]);
@@ -158,6 +173,11 @@ export default function Home() {
   const [historico, setHistorico] = useState(null);
   const [opciones, setOpciones] = useState({ bancos: [], formasPago: [], marcas: [], tipos: [], categorias: [], gastos: [], monedas: [] });
   const [tarjetaActiva, setTarjetaActiva] = useState(null);
+
+  // Día de cierre de cada tarjeta (por banco) y borrador de lo que se está editando.
+  const [cierreDias, setCierreDias] = useState({});
+  const [cierreForm, setCierreForm] = useState({});
+  const [cierreStatus, setCierreStatus] = useState("");
 
   const [cfgPiso, setCfgPiso] = useState("");
   const [cfgStatus, setCfgStatus] = useState("");
@@ -179,14 +199,9 @@ export default function Home() {
   const pagoInicial = { formaPago: FORMA_TARJETA, banco: "", marca: "VISA", fechaCierre: "" };
 
   const [gForm, setGForm] = useState({
-    gasto: "", tipo: "", categoria: "", ...pagoInicial, desc: "", fecha: "", cuotas: 1, moneda: "ARS", monto: ""
+    gasto: "Gasto variable", tipo: "", categoria: "", ...pagoInicial, desc: "", fecha: hoyISO, cuotas: 1, moneda: "ARS", monto: ""
   });
   const [addStatus, setAddStatus] = useState("");
-
-  const [simForm, setSimForm] = useState({
-    ...pagoInicial, moneda: "ARS", monto: "", cuotas: 1, fecha: ""
-  });
-  const [simStatus, setSimStatus] = useState("");
 
   const [histDesde, setHistDesde] = useState("");
   const [histHasta, setHistHasta] = useState("");
@@ -227,6 +242,7 @@ export default function Home() {
       setCfgPiso(payload.config.piso || "");
       setSueldoSchedule(payload.config.sueldoSchedule || []);
       setAhorroMovs(payload.config.ahorroMovs || []);
+      if (payload.config.cierreDias) setCierreDias(payload.config.cierreDias);
     }
     if (payload.dolarBlue) setDolarBlue(payload.dolarBlue);
     else setDolarBlue(0);
@@ -243,8 +259,8 @@ export default function Home() {
     const formaPago = op.formasPago[0] || FORMA_TARJETA;
     const banco = op.bancos[0] || "";
     const marca = op.marcas[0] || "VISA";
-    setGForm((f) => ({ ...f, gasto: op.gastos[0] || "", tipo: op.tipos[0] || "", formaPago, banco, marca, moneda: op.monedas[0] || "ARS" }));
-    setSimForm((f) => ({ ...f, formaPago, banco, marca, moneda: op.monedas[0] || "ARS" }));
+    const tipo = op.tipos.includes("Compra") ? "Compra" : (op.tipos[0] || "");
+    setGForm((f) => ({ ...f, tipo, formaPago, banco, marca, moneda: op.monedas[0] || "ARS" }));
   }
 
   async function cargarGastosFijos() {
@@ -307,7 +323,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!canvasRef.current || tab !== "resumen") return;
+    if (!canvasRef.current || tab !== "proyeccion" || proyVista !== "proyeccion") return;
     if (chartRef.current) chartRef.current.destroy();
     if (!meses.length) return;
     const fmtCorto = (n) => "$" + (Math.abs(n) >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.round(n / 1000) + "k");
@@ -338,7 +354,7 @@ export default function Home() {
         }
       }
     });
-  }, [meses, tab]);
+  }, [meses, tab, proyVista]);
 
   async function guardarConfig() {
     setCfgStatus("Guardando...");
@@ -352,6 +368,27 @@ export default function Home() {
       setCfgStatus("✅ Guardado");
     } catch (e) {
       setCfgStatus("❌ " + e.message);
+    }
+  }
+
+  async function guardarCierre(banco) {
+    const dia = String(cierreForm[banco] ?? cierreDias[banco] ?? "").trim();
+    setCierreStatus("Guardando...");
+    try {
+      const payload = await fetchJSON("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cierre: { banco, dia } })
+      });
+      render(payload);
+      setCierreForm((f) => { const n = { ...f }; delete n[banco]; return n; });
+      setCierreStatus(dia ? `✅ ${banco}: cierra el día ${dia}. Los gastos se reubicaron.` : `✅ ${banco}: sin día fijo (se usa el jueves de cierre).`);
+      if (gastosHist !== null) cargarGastosMes();
+      cargarCuotasMes();
+      cargarTarjetaMes();
+      buscarHistorico();
+    } catch (e) {
+      setCierreStatus("❌ " + e.message);
     }
   }
 
@@ -415,59 +452,29 @@ export default function Home() {
     await verPeriodo(mesObjetivo.month, mesObjetivo.year);
   }
 
-  async function simular() {
-    setSimStatus("Calculando...");
+  async function agregar() {
+    if (!String(gForm.desc).trim()) { setAddStatus("❌ Escribí una descripción."); return; }
+    if (!(Number(gForm.monto) > 0)) { setAddStatus("❌ Ingresá un monto mayor a 0."); return; }
+    setAddStatus("Guardando...");
     try {
-      const data = await fetchJSON("/api/dashboard", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hipotetico: simForm })
-      });
-      render(data);
-      setSimStatus("✅ Simulación aplicada (no se guardó nada)");
-    } catch (e) {
-      setSimStatus("❌ " + e.message);
-    }
-  }
-
-  async function guardarSimulacion() {
-    setSimStatus("Guardando...");
-    try {
-      const data = {
-        gasto: "Gasto variable",
-        tipo: "Compra",
-        ...simForm,
-        desc: "Compra simulada"
+      const esIngreso = gForm.gasto === "Ingreso extra";
+      const esCompra = gForm.gasto === "Gasto variable";
+      // Un ingreso no tiene medio de pago y un fijo no tiene cuotas ni fecha de cierre.
+      const payload = {
+        ...gForm,
+        cuotas: esCompra ? gForm.cuotas : 1,
+        fechaCierre: esCompra ? gForm.fechaCierre : "",
+        ...(esIngreso ? { formaPago: "", banco: "", marca: "", categoria: "" } : {})
       };
       const res = await fetchJSON("/api/gastos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data)
+        body: JSON.stringify(payload)
       });
       render(res.dashboard);
       setGastosFijos(res.gastosFijos);
-      setSimStatus("✅ Gasto guardado en la planilla");
-      buscarHistorico();
-      cargarCuotasMes();
-      cargarTarjetaMes();
-      if (gastosHist !== null) cargarGastosMes();
-    } catch (e) {
-      setSimStatus("❌ " + e.message);
-    }
-  }
-
-  async function agregar() {
-    setAddStatus("Guardando...");
-    try {
-      const res = await fetchJSON("/api/gastos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(gForm)
-      });
-      render(res.dashboard);
-      setGastosFijos(res.gastosFijos);
-      setAddStatus("✅ Agregado");
-      setGForm((f) => ({ ...f, desc: "", monto: "" }));
+      setAddStatus("✅ Guardado en la planilla");
+      setGForm((f) => ({ ...f, desc: "", monto: "", cuotas: 1 }));
       buscarHistorico();
       cargarCuotasMes();
       cargarTarjetaMes();
@@ -487,6 +494,7 @@ export default function Home() {
 
   function irATarjeta(nombre) {
     setTarjetaActiva(nombre);
+    setTarjetasVista("tarjeta");
     setTab("tarjetas");
   }
 
@@ -496,7 +504,7 @@ export default function Home() {
     if (!historico) return [];
     const grupos = new Map();
     historico
-      .filter((h) => h.formaPago === FORMA_TARJETA)
+      .filter((h) => h.formaPago === FORMA_TARJETA && h.gasto !== "Ingreso extra")
       .forEach((h) => {
         const key = [h.marca, h.banco].filter(Boolean).join(" ") || h.medio || "Sin especificar";
         if (!grupos.has(key)) grupos.set(key, { medio: key, banco: h.banco, gastos: [], totalARS: 0, totalUSD: 0 });
@@ -545,6 +553,9 @@ export default function Home() {
   }, [tarjetaMesCuotas, gastosFijos]);
 
   const tarjetaMesItems = itemsMesPorTarjeta[grupoActivo?.medio] || [];
+  // Los fijos no tienen cuota: se muestran aparte de las cuotas del mes.
+  const tarjetaMesCuotasItems = tarjetaMesItems.filter((c) => c.cuota !== "Fijo");
+  const tarjetaMesFijosItems = tarjetaMesItems.filter((c) => c.cuota === "Fijo");
   const tarjetaMesTotal = tarjetaMesItems.reduce((acc, c) => acc + (Number(c.montoARS) || 0), 0);
   const tarjetaMesTotalUSD = tarjetaMesItems.reduce((acc, c) => acc + (Number(c.montoUSD) || 0), 0);
 
@@ -555,7 +566,8 @@ export default function Home() {
     Object.entries(itemsMesPorTarjeta).forEach(([key, lista]) => {
       totales[key] = {
         total: lista.reduce((acc, c) => acc + (Number(c.montoARS) || 0), 0),
-        cuotas: lista.length
+        cuotas: lista.filter((c) => c.cuota !== "Fijo").length,
+        fijos: lista.filter((c) => c.cuota === "Fijo").length
       };
     });
     return totales;
@@ -613,7 +625,7 @@ export default function Home() {
   }, [gastosHist, objY, objM]);
 
   useEffect(() => {
-    if (!gastosCanvasRef.current || tab !== "gastos") return;
+    if (!gastosCanvasRef.current || tab !== "gastos" || gastosVista !== "detalle") return;
     if (gastosChartRef.current) gastosChartRef.current.destroy();
     if (!evolutivo.length) return;
     gastosChartRef.current = new Chart(gastosCanvasRef.current.getContext("2d"), {
@@ -708,7 +720,7 @@ export default function Home() {
   }, [histRegistros]);
 
   useEffect(() => {
-    if (!histCanvasRef.current || tab !== "historico") return;
+    if (!histCanvasRef.current || tab !== "gastos" || gastosVista !== "historico") return;
     if (histChartRef.current) histChartRef.current.destroy();
     if (!histEvolutivo.length) return;
     histChartRef.current = new Chart(histCanvasRef.current.getContext("2d"), {
@@ -734,7 +746,7 @@ export default function Home() {
         }
       }
     });
-  }, [histEvolutivo, tab]);
+  }, [histEvolutivo, tab, gastosVista]);
 
   // ---- Dashboard de gastos: ¿qué pasó con mi plata en el mes elegido? (solo histórico/corriente) ----
   const gastosKpis = useMemo(() => {
@@ -890,57 +902,59 @@ export default function Home() {
     return { id: "justo", texto: "Justo en el piso" };
   };
 
-  // Alertas objetivas, calculadas solo con los números de la proyección mostrada.
-  const alertasProy = useMemo(() => {
-    const lista = [];
-    if (meses.length < 2) return lista;
-    const promG = meses.reduce((acc, m) => acc + m.gastos, 0) / meses.length;
-    meses.forEach((m, i) => {
-      const prev = i > 0 ? meses[i - 1] : null;
-      if (m.margen < 0) {
-        lista.push({ nivel: "crit", mes: m.label, texto: `Los gastos superan a los ingresos por ${fmt(-m.margen)}.` });
-      } else if (m.piso < m.pisoConfigurado) {
-        lista.push({ nivel: "warn", mes: m.label, texto: `No se alcanza el piso: quedan ${fmt(m.margen)} de los ${fmt(m.pisoConfigurado)} configurados.` });
-      }
-      if (promG && m.gastos > promG * 1.15) {
-        lista.push({ nivel: "warn", mes: m.label, texto: `Gastos ${Math.round((m.gastos / promG - 1) * 100)}% por encima del promedio de estos meses (${fmt(promG)}).` });
-      }
-      if (prev && prev.gastos - m.gastos >= 100000 && (prev.gastos - m.gastos) / prev.gastos >= 0.15) {
-        lista.push({ nivel: "ok", mes: m.label, texto: `Bajan los gastos ${fmt(prev.gastos - m.gastos)} respecto de ${prev.label}: terminan cuotas.` });
-      }
-      if (prev && m.ahorroProyectado - prev.ahorroProyectado >= 100000) {
-        lista.push({ nivel: "ok", mes: m.label, texto: `Sube el ahorro proyectado ${fmt(m.ahorroProyectado - prev.ahorroProyectado)} respecto de ${prev.label}.` });
-      }
-      if (m.aguinaldo > 0) {
-        lista.push({ nivel: "info", mes: m.label, texto: `Ingresa aguinaldo (${fmt(m.aguinaldo)}).` });
-      }
-    });
-    return lista;
-  }, [meses]);
+  const alertasProy = useMemo(() => calcAlertas(meses), [meses]);
+  const alertasInicio = useMemo(() => calcAlertas(mesesBase), [mesesBase]);
 
+  // Inicio: mes elegido dentro de la proyección base y lo que se paga de cada cuenta ese mes.
+  const mesInicio = mesesBase[Math.min(inicioIdx, Math.max(mesesBase.length - 1, 0))] || null;
+  const cuentasInicio = useMemo(() => {
+    if (!mesInicio || !porCuenta) return [];
+    const mo = porCuenta.meses.find((m) => m.key === mesInicio.key);
+    if (!mo) return [];
+    return Object.entries(mo.cuentas).sort((a, b) => b[1] - a[1]);
+  }, [mesInicio, porCuenta]);
+
+  const renderFijos = () => (
+    <div className="table-scroll">
+      <table>
+        {gastosFijos.length === 0 ? (
+          <tbody><tr><td className="empty-hint">No tenés gastos fijos cargados.</td></tr></tbody>
+        ) : (
+          <>
+            <thead>
+              <tr><th>Descripción</th><th>Tipo</th><th>Medio</th><th className="num">Monto por mes</th><th></th></tr>
+            </thead>
+            <tbody>
+              {gastosFijos.map((g) => (
+                <tr key={g.row}>
+                  <td className="strong">{g.desc}</td>
+                  <td>{g.tipo}</td>
+                  <td>{g.medio}</td>
+                  <td className="num">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</td>
+                  <td className="col-action"><button className="btn-danger-ghost" onClick={() => eliminarFijo(g.row)}>Eliminar</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </>
+        )}
+      </table>
+    </div>
+  );
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-inner">
           <div className="brand">
-            <span className="brand-icon">💰</span>
-            <div>
-              <h1>Tablero de Gastos</h1>
-              <div className="dolarInfo">
-                {dolarBlue ? <>Dólar blue <b>{fmt(dolarBlue)}</b></> : "Dólar blue no disponible"}
-              </div>
-            </div>
+            <span className="brand-icon">$</span>
+            <h1>Tablero de Gastos</h1>
+            <span className="dolar-chip">
+              {dolarBlue ? <>Dólar blue <b>{fmt(dolarBlue)}</b></> : "Dólar blue no disponible"}
+            </span>
           </div>
-          {mesActualData && (
-            <div className="hero-balance">
-              <div className="hero-balance-label">Ahorro proyectado · {mesActualData.label}</div>
-              <div className={`hero-balance-amount ${mesActualData.ahorroProyectado < 0 ? "neg" : ""}`}>
-                {fmt(mesActualData.ahorroProyectado)}
-              </div>
-              <div className="hero-balance-sub">Gastos del mes: {fmt(mesActualData.gastos)}</div>
-            </div>
-          )}
+          <button className={`btn-cargar ${tab === "cargar" ? "active" : ""}`} onClick={() => abrirTab("cargar")}>
+            ＋ Cargar
+          </button>
         </div>
         <nav className="tabnav">
           {TABS.map((t) => (
@@ -949,7 +963,6 @@ export default function Home() {
               className={`tabbtn ${tab === t.id ? "active" : ""}`}
               onClick={() => abrirTab(t.id)}
             >
-              <span className="tabbtn-icon">{t.icon}</span>
               {t.label}
             </button>
           ))}
@@ -957,8 +970,137 @@ export default function Home() {
       </header>
 
       <main className="content">
-        {tab === "resumen" && (
+        {tab === "inicio" && (
           <div className="stack">
+            {!mesInicio ? (
+              <section className="card"><div className="empty-hint">Cargando...</div></section>
+            ) : (() => {
+              const mo = mesInicio;
+              const est = estadoMes(mo);
+              const base = Math.max(mo.ingresos, mo.gastos, 1);
+              const ancho = (v) => `${Math.max(0, Math.min(100, (v / base) * 100))}%`;
+              const totalCuentas = cuentasInicio.reduce((acc, [, v]) => acc + v, 0);
+              const mirar = [...alertasInicio.filter((a) => a.nivel !== "info"), ...alertasInicio.filter((a) => a.nivel === "info")].slice(0, 4);
+              const ultimo = Math.max(mesesBase.length - 1, 0);
+              return (
+                <>
+                  <div className="page-head">
+                    <div>
+                      <h2 className="page-title">{MESES_NOMBRE[mo.month]} {mo.year}</h2>
+                      <p className="page-sub">Cómo viene el mes, de un vistazo.</p>
+                    </div>
+                    <div className="month-nav">
+                      <button className="btn-icon" disabled={inicioIdx <= 0} onClick={() => setInicioIdx(Math.max(0, inicioIdx - 1))}>‹</button>
+                      <span className="month-nav-label">{mo.label}</span>
+                      <button className="btn-icon" disabled={inicioIdx >= ultimo} onClick={() => setInicioIdx(Math.min(ultimo, inicioIdx + 1))}>›</button>
+                    </div>
+                  </div>
+
+                  <div className="kpi-row">
+                    <div className="kpi-card">
+                      <div className="kpi-label">Sueldo</div>
+                      <div className="kpi-value">{fmt(mo.ingresos)}</div>
+                      <div className="kpi-sub">
+                        {mo.aguinaldo > 0 || mo.ingresoExtra > 0
+                          ? [mo.aguinaldo > 0 ? `incl. aguinaldo ${fmt(mo.aguinaldo)}` : "", mo.ingresoExtra > 0 ? `incl. extra ${fmt(mo.ingresoExtra)}` : ""].filter(Boolean).join(" · ")
+                          : "Lo que entra este mes"}
+                      </div>
+                    </div>
+                    <button className="kpi-card kpi-link" onClick={() => { setGastosMesFiltro({ month: mo.month, year: mo.year }); setGastosVista("detalle"); abrirTab("gastos"); }}>
+                      <div className="kpi-label">Gastos</div>
+                      <div className="kpi-value">{fmt(mo.gastos)}</div>
+                      <div className="kpi-sub">Fijos {fmt(mo.gastoFijo)} · Cuotas {fmt(mo.gastoVariable)}</div>
+                    </button>
+                    <div className="kpi-card">
+                      <div className="kpi-label">Libre</div>
+                      <div className="kpi-value">{fmt(mo.piso)}</div>
+                      <div className="kpi-sub">
+                        {mo.piso < mo.pisoConfigurado ? `Ajustado (piso config. ${fmt(mo.pisoConfigurado)})` : "Tu piso, siempre disponible"}
+                      </div>
+                    </div>
+                    <div className={`kpi-card kpi-accent estado-borde-${est.id}`}>
+                      <div className="kpi-label">Ahorro proyectado</div>
+                      <div className="kpi-value">{fmt(mo.ahorroProyectado)}</div>
+                      <div className="kpi-sub"><span className={`estado-chip estado-${est.id}`}>{est.texto}</span></div>
+                    </div>
+                  </div>
+
+                  <section className="card">
+                    <div className="card-head-row">
+                      <h2>Adónde va la plata</h2>
+                      <span className="muted">Ingresos {fmt(mo.ingresos)}</span>
+                    </div>
+                    <div className="flow-bar">
+                      <span style={{ width: ancho(Math.min(mo.gastos, base)), background: "var(--red)" }}></span>
+                      <span style={{ width: ancho(mo.piso), background: "#c4c4cc" }}></span>
+                      <span style={{ width: ancho(mo.ahorroProyectado), background: "var(--green)" }}></span>
+                    </div>
+                    <div className="flow-legend">
+                      <span><i style={{ background: "var(--red)" }}></i>Gastos {fmt(mo.gastos)}</span>
+                      <span><i style={{ background: "#c4c4cc" }}></i>Libre {fmt(mo.piso)}</span>
+                      <span><i style={{ background: "var(--green)" }}></i>Ahorro {fmt(mo.ahorroProyectado)}</span>
+                    </div>
+                  </section>
+
+                  <section className="card">
+                    <div className="card-head-row">
+                      <h2>Gastos por tarjeta</h2>
+                      <button className="section-link" onClick={() => setTab("tarjetas")}>Ver tarjetas →</button>
+                    </div>
+                    {cuentasInicio.length === 0 ? (
+                      <div className="empty-hint">No hay gastos por cuenta este mes.</div>
+                    ) : (
+                      <>
+                        {cuentasInicio.map(([nombre, monto]) => {
+                          const esTarjeta = porTarjeta.some((g) => g.medio === nombre);
+                          return (
+                            <button
+                              key={nombre}
+                              className={`cuenta-row ${esTarjeta ? "" : "cuenta-row-plana"}`}
+                              onClick={() => { if (esTarjeta) irATarjeta(nombre); }}
+                            >
+                              <span className="tarjeta-avatar">{iniciales(nombre)}</span>
+                              <span className="cuenta-main">
+                                <span className="cuenta-name">{nombre}</span>
+                                <span className="cuenta-bar"><span style={{ width: `${totalCuentas ? (monto / totalCuentas) * 100 : 0}%` }}></span></span>
+                              </span>
+                              <span className="cuenta-monto">
+                                {fmt(monto)}
+                                <span className="cuenta-pct">{totalCuentas ? Math.round((monto / totalCuentas) * 100) : 0}%</span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                        <div className="cuenta-total"><span>Total</span><strong>{fmt(totalCuentas)}</strong></div>
+                      </>
+                    )}
+                  </section>
+
+                  {mirar.length > 0 && (
+                    <section className="card">
+                      <div className="card-head-row">
+                        <h2>Para tener en cuenta</h2>
+                        <button className="section-link" onClick={() => { setProyVista("proyeccion"); setTab("proyeccion"); }}>Ver proyección →</button>
+                      </div>
+                      {mirar.map((a, i) => (
+                        <div className={`alerta-row alerta-${a.nivel}`} key={i}>
+                          <span className="alerta-icon">{a.nivel === "ok" ? "✓" : (a.nivel === "info" ? "ℹ" : "⚠")}</span>
+                          <div><strong>{a.mes}</strong> — {a.texto}</div>
+                        </div>
+                      ))}
+                    </section>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        )}
+
+        {tab === "proyeccion" && (
+          <div className="stack">
+            <Segmented value={proyVista} onChange={setProyVista} options={[{ value: "proyeccion", label: "Proyección" }, { value: "sueldo", label: "Sueldo" }]} />
+            {proyVista === "proyeccion" && (
+              <>
             <section className="card">
               <div className="card-head-row" style={{ marginBottom: 0 }}>
                 <div>
@@ -1119,13 +1261,77 @@ export default function Home() {
               </div>
               {cfgStatus && <div className="status">{cfgStatus}</div>}
             </section>
+              </>
+            )}
+            {proyVista === "sueldo" && (
+              <>
+            <section className="card">
+              <div className="card-head">
+                <h2>Evolución del sueldo</h2>
+              </div>
+              <p className="hint" style={{ margin: "0 0 16px" }}>
+                Cargá desde qué mes rige cada sueldo — por ejemplo, &ldquo;desde septiembre $X&rdquo; y &ldquo;desde
+                diciembre $Y&rdquo; para un aumento ya sabido. El tablero usa el tramo vigente en cada mes de la
+                proyección, y el aguinaldo (medio sueldo) se suma solo en junio y diciembre.
+              </p>
+
+              {sueldoSchedule.length > 0 && (
+                <div className="table-scroll" style={{ marginBottom: 16 }}>
+                  <table>
+                    <thead>
+                      <tr><th>Vigente desde</th><th className="num">Sueldo</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {sueldoSchedule.map((t) => (
+                        <tr key={t.key}>
+                          <td className="strong">{labelTramo(t.key)}</td>
+                          <td className="num">{fmt(t.monto)}</td>
+                          <td className="col-action">
+                            <button className="btn-danger-ghost" onClick={() => eliminarTramoSueldo(t.key)}>Eliminar</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="field-row">
+                <div className="field">
+                  <label>Vigente desde (mes)</label>
+                  <select value={sueldoForm.month} onChange={(e) => setSueldoForm({ ...sueldoForm, month: Number(e.target.value) })}>
+                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Año</label>
+                  <input type="number" value={sueldoForm.year} onChange={(e) => setSueldoForm({ ...sueldoForm, year: Number(e.target.value) })} />
+                </div>
+                <div className="field">
+                  <label>Monto del sueldo</label>
+                  <input type="number" placeholder="0" value={sueldoForm.monto} onChange={(e) => setSueldoForm({ ...sueldoForm, monto: e.target.value })} />
+                </div>
+                <div className="field field-action">
+                  <button className="btn-primary" onClick={agregarTramoSueldo}>Agregar tramo</button>
+                </div>
+              </div>
+              {sueldoStatus && <div className="status">{sueldoStatus}</div>}
+            </section>
+              </>
+            )}
           </div>
         )}
 
         {tab === "gastos" && (
           <div className="stack">
+            <Segmented
+              value={gastosVista}
+              onChange={setGastosVista}
+              options={[{ value: "detalle", label: "Detalle" }, { value: "dashboard", label: "Dashboard" }, { value: "historico", label: "Compras" }, { value: "fijos", label: "Fijos" }]}
+            />
+            {(gastosVista === "detalle" || gastosVista === "dashboard") && (
             <section className="card">
-              <div className="card-head-row">
+              <div className="card-head-row" style={{ marginBottom: 0 }}>
                 <h2>Gastos de {MESES_NOMBRE[gastosMesFiltro.month].toLowerCase()} {gastosMesFiltro.year}</h2>
                 <div className="filtro-inline">
                   <button className="btn-icon" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, -1); elegirMesGastos(n.month, n.year); }}>‹</button>
@@ -1142,13 +1348,99 @@ export default function Home() {
                   <button className="btn-ghost" onClick={() => elegirMesGastos(mesObjetivo.month, mesObjetivo.year)}>Hoy</button>
                 </div>
               </div>
-              <div className="chips" style={{ marginBottom: 0 }}>
-                <button className={`chip ${gastosVista === "detalle" ? "active" : ""}`} onClick={() => setGastosVista("detalle")}>📋 Detalle</button>
-                <button className={`chip ${gastosVista === "dashboard" ? "active" : ""}`} onClick={() => setGastosVista("dashboard")}>📊 Dashboard</button>
+            </section>
+            )}
+
+            {gastosVista === "historico" ? (
+              <>
+            <section className="card">
+              <div className="card-head-row">
+                <h2>Compras de {MESES_NOMBRE[histMes.month].toLowerCase()} {histMes.year}</h2>
+                <div className="filtro-inline">
+                  <button className="btn-icon" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, -1))}>‹</button>
+                  <select value={histMes.month} onChange={(e) => setHistMes({ ...histMes, month: Number(e.target.value) })}>
+                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                  </select>
+                  <select value={histMes.year} onChange={(e) => setHistMes({ ...histMes, year: Number(e.target.value) })}>
+                    {histAnios.map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <button className="btn-icon" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, 1))}>›</button>
+                  <button className="btn-ghost" onClick={() => setHistMes({ month: hoy.getMonth(), year: hoy.getFullYear() })}>Hoy</button>
+                </div>
               </div>
+
+              {histItemsMes === null ? (
+                <div className="empty-hint">Cargando...</div>
+              ) : histCategorias.length === 0 ? (
+                <div className="empty-hint">No hay compras cargadas en ese mes.</div>
+              ) : (
+                <>
+                  <div className="chips">
+                    <button className={`chip ${histCatActiva === "" ? "active" : ""}`} onClick={() => setHistCat("")}>Todas</button>
+                    {histCategorias.map(([cat, total]) => (
+                      <button key={cat} className={`chip ${histCatActiva === cat ? "active" : ""}`} onClick={() => setHistCat(cat)}>
+                        {cat} · {fmt(total)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="hint" style={{ margin: "0 0 8px" }}>
+                    {histCantidadMes} compras · total <span className="strong">{fmt(histTotalMes)}</span>
+                  </p>
+
+                  {histGrupos.map((g) => (
+                    <div className="cat-block" key={g.cat}>
+                      <div className="cat-head">
+                        <span className="cat-name">{g.cat}</span>
+                        <span className="cat-total">{fmt(g.total)}</span>
+                      </div>
+                      <div className="cat-bar"><span style={{ width: `${histTotalMes ? (g.total / histTotalMes) * 100 : 0}%` }}></span></div>
+                      {g.items.map((h) => (
+                        <div className="cat-item" key={h.row}>
+                          <div className="cat-item-left">
+                            <span className="cat-item-medio">{String(h.dia).padStart(2, "0")}/{String(h.m + 1).padStart(2, "0")}</span>
+                            <span className="strong">{h.desc}</span>
+                            <span className="cat-item-medio">{h.medio}</span>
+                            {Number(h.cuotas) > 1 && <span className="badge badge-info">{h.cuotas} cuotas · total {fmt(h.totalARS)}</span>}
+                            {h.mesPago && <span className="badge badge-fijo">Se paga en {labelTramo(h.mesPago)}{h.ultimoMesPago && h.ultimoMesPago !== h.mesPago ? ` → ${labelTramo(h.ultimoMesPago)}` : ""}</span>}
+                          </div>
+                          <div className="cat-item-monto">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </>
+              )}
             </section>
 
-            {gastosVista === "dashboard" ? (
+            <section className="card">
+              <div className="card-head">
+                <h2>Evolutivo de compras (valor de cuota)</h2>
+              </div>
+              {histEvolutivo.length === 0 ? (
+                <div className="empty-hint">Cargando...</div>
+              ) : (
+                <>
+                  <div className="chart-box"><canvas ref={histCanvasRef}></canvas></div>
+                  <div className="subsection-title">En qué más gasté cada mes</div>
+                  <div className="top-mes-grid">
+                    {histEvolutivo.map((m) => (
+                      <div className="top-mes" key={m.key}>
+                        <div className="top-mes-label">{m.label}</div>
+                        <div className="top-mes-cat">{m.topCat ? `${m.topCat[0]} · ${fmt(m.topCat[1])}` : "—"}</div>
+                        <div className="top-mes-sub">{m.topItem ? `Mayor compra: ${m.topItem.desc} (${fmt(m.topItem.total)})` : "Sin compras"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+              </>
+            ) : gastosVista === "fijos" ? (
+              <section className="card">
+                <div className="card-head"><h2>Gastos fijos</h2></div>
+                {renderFijos()}
+              </section>
+            ) : gastosVista === "dashboard" ? (
               gastosKpis === null ? (
                 <section className="card"><div className="empty-hint">Cargando...</div></section>
               ) : (
@@ -1335,63 +1627,6 @@ export default function Home() {
           </div>
         )}
 
-        {tab === "sueldo" && (
-          <div className="stack">
-            <section className="card">
-              <div className="card-head">
-                <h2>Evolución del sueldo</h2>
-              </div>
-              <p className="hint" style={{ margin: "0 0 16px" }}>
-                Cargá desde qué mes rige cada sueldo — por ejemplo, &ldquo;desde septiembre $X&rdquo; y &ldquo;desde
-                diciembre $Y&rdquo; para un aumento ya sabido. El tablero usa el tramo vigente en cada mes de la
-                proyección, y el aguinaldo (medio sueldo) se suma solo en junio y diciembre.
-              </p>
-
-              {sueldoSchedule.length > 0 && (
-                <div className="table-scroll" style={{ marginBottom: 16 }}>
-                  <table>
-                    <thead>
-                      <tr><th>Vigente desde</th><th className="num">Sueldo</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {sueldoSchedule.map((t) => (
-                        <tr key={t.key}>
-                          <td className="strong">{labelTramo(t.key)}</td>
-                          <td className="num">{fmt(t.monto)}</td>
-                          <td className="col-action">
-                            <button className="btn-danger-ghost" onClick={() => eliminarTramoSueldo(t.key)}>Eliminar</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              <div className="field-row">
-                <div className="field">
-                  <label>Vigente desde (mes)</label>
-                  <select value={sueldoForm.month} onChange={(e) => setSueldoForm({ ...sueldoForm, month: Number(e.target.value) })}>
-                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>Año</label>
-                  <input type="number" value={sueldoForm.year} onChange={(e) => setSueldoForm({ ...sueldoForm, year: Number(e.target.value) })} />
-                </div>
-                <div className="field">
-                  <label>Monto del sueldo</label>
-                  <input type="number" placeholder="0" value={sueldoForm.monto} onChange={(e) => setSueldoForm({ ...sueldoForm, monto: e.target.value })} />
-                </div>
-                <div className="field field-action">
-                  <button className="btn-primary" onClick={agregarTramoSueldo}>Agregar tramo</button>
-                </div>
-              </div>
-              {sueldoStatus && <div className="status">{sueldoStatus}</div>}
-            </section>
-          </div>
-        )}
-
         {tab === "ahorro" && (
           <div className="stack">
             <div className="two-col">
@@ -1473,115 +1708,9 @@ export default function Home() {
 
         {tab === "tarjetas" && (
           <div className="stack">
-            <div className="bankcards-row">
-              {porTarjeta.length === 0 && <div className="empty-hint">Todavía no tenés compras con tarjeta de crédito cargadas.</div>}
-              {porTarjeta.map((g) => (
-                <div
-                  key={g.medio}
-                  className={`bankcard ${cardTheme(g.banco)} ${grupoActivo?.medio === g.medio ? "active" : ""}`}
-                  onClick={() => setTarjetaActiva(g.medio)}
-                >
-                  <div className="bankcard-top">
-                    <span className="bankcard-brand">{g.medio}</span>
-                    <span className="bankcard-chip"></span>
-                  </div>
-                  <div className="bankcard-dots">•••• •••• •••• {iniciales(g.medio)}</div>
-                  <div className="bankcard-bottom">
-                    <span className="bankcard-name">
-                      {totalesMesPorTarjeta[g.medio]?.cuotas || 0} gastos · {MESES_NOMBRE[tarjetaMesFiltro.month].slice(0, 3)}
-                    </span>
-                    <span className="bankcard-total">{fmt(totalesMesPorTarjeta[g.medio]?.total || 0)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {grupoActivo && (
+            <Segmented value={tarjetasVista} onChange={setTarjetasVista} options={[{ value: "tarjeta", label: "Por tarjeta" }, { value: "cuotas", label: "Cuotas del mes" }]} />
+            {tarjetasVista === "cuotas" && (
               <>
-                <section className="card">
-                  <div className="card-head-row">
-                    <h2>{grupoActivo.medio}</h2>
-                    <div className="tarjeta-totales">
-                      <span className="badge badge-total">{fmt(tarjetaMesTotal)}</span>
-                      {tarjetaMesTotalUSD > 0 && <span className="badge badge-neutral">≈ {fmtUSD(tarjetaMesTotalUSD)}</span>}
-                    </div>
-                  </div>
-
-                  <div className="subsection-title">Cuotas por mes</div>
-                  <div className="month-nav" style={{ marginBottom: 14 }}>
-                    <button className="btn-icon" onClick={() => irMesTarjeta(-1)}>‹</button>
-                    <span className="month-nav-label">{MESES_NOMBRE[tarjetaMesFiltro.month]} {tarjetaMesFiltro.year}</span>
-                    <button className="btn-icon" onClick={() => irMesTarjeta(1)}>›</button>
-                  </div>
-
-                  {tarjetaMesCuotas === null ? (
-                    <div className="empty-hint">Cargando...</div>
-                  ) : tarjetaMesItems.length === 0 ? (
-                    <div className="empty-hint">Esta tarjeta no tiene gastos en ese mes.</div>
-                  ) : (
-                    <div className="table-scroll">
-                      <table>
-                        <thead>
-                          <tr><th>Descripción</th><th className="num">Monto</th><th>Detalle</th></tr>
-                        </thead>
-                        <tbody>
-                          {tarjetaMesItems.map((c, i) => (
-                            <tr key={i}>
-                              <td className="strong">{c.desc}</td>
-                              <td className="num">{celdaEquivalencia(c.moneda, c.montoARS, c.montoUSD)}</td>
-                              <td>
-                                <span className={`badge ${c.cuota === "Fijo" ? "badge-neutral" : "badge-info"}`}>
-                                  {c.cuota === "Fijo" ? "Fijo" : `Cuota ${c.cuota}`}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                          <tr>
-                            <td className="strong">Total del mes</td>
-                            <td className="num strong">{fmt(tarjetaMesTotal)}</td>
-                            <td></td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </section>
-
-                <section className="card">
-                  <div className="subsection-title">
-                    Historial completo · {grupoActivo.gastos.length} gastos · total histórico {fmt(grupoActivo.totalARS)}
-                  </div>
-                  <div className="table-scroll">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Fecha</th><th>Descripción</th><th>Tipo</th><th>Categoría</th>
-                          <th>Cuotas</th><th className="num">Monto</th><th>Estado</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {grupoActivo.gastos.map((h) => (
-                          <tr key={h.row}>
-                            <td className="muted">{h.fecha}</td>
-                            <td className="strong">{h.desc}</td>
-                            <td>{h.tipo}</td>
-                            <td>{h.gasto}</td>
-                            <td>{h.cuotas}</td>
-                            <td className="num">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</td>
-                            <td>{estadoBadge(h.estado)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              </>
-            )}
-          </div>
-        )}
-
-        {tab === "cuotas" && (
-          <div className="stack">
             {porCuenta && porCuenta.cuentas.length > 0 && (
               <section className="card">
                 <div className="card-head">
@@ -1704,187 +1833,366 @@ export default function Home() {
                 </div>
               </section>
             ))}
-          </div>
-        )}
-
-        {tab === "fijos" && (
-          <section className="card">
-            <div className="card-head">
-              <h2>Gastos fijos</h2>
-            </div>
-            <div className="table-scroll">
-              <table>
-                {gastosFijos.length === 0 ? (
-                  <tbody><tr><td className="empty-hint">No tenés gastos fijos cargados.</td></tr></tbody>
-                ) : (
-                  <>
-                    <thead>
-                      <tr><th>Descripción</th><th>Tipo</th><th>Medio</th><th className="num">Monto</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {gastosFijos.map((g) => (
-                        <tr key={g.row}>
-                          <td className="strong">{g.desc}</td>
-                          <td>{g.tipo}</td>
-                          <td>{g.medio}</td>
-                          <td className="num">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</td>
-                          <td className="col-action"><button className="btn-danger-ghost" onClick={() => eliminarFijo(g.row)}>Eliminar</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </>
-                )}
-              </table>
-            </div>
-          </section>
-        )}
-
-        {tab === "cargar" && (
-          <div className="two-col">
+              </>
+            )}
+            {tarjetasVista === "tarjeta" && (
+              <>
             <section className="card">
               <div className="card-head">
-                <h2>➕ Cargar gasto / ingreso extra</h2>
+                <h2>Fecha de cierre de cada tarjeta</h2>
+                <p className="hint" style={{ margin: "4px 0 0" }}>
+                  Una compra hecha <strong>antes</strong> del día de cierre se paga con el sueldo del mes siguiente; la hecha
+                  <strong> el día del cierre o después</strong> se paga un mes más tarde. Ej.: cierre el 20 → compra del 19/10 en
+                  noviembre, del 20/10 en diciembre. Sin día configurado se usa el jueves de cierre de la planilla.
+                </p>
               </div>
-              <label>Fijo o variable</label>
-              <select value={gForm.gasto} onChange={(e) => setGForm({ ...gForm, gasto: e.target.value })}>
-                {opciones.gastos.map((v) => <option key={v}>{v}</option>)}
-              </select>
-              <label>Tipo</label>
-              <select value={gForm.tipo} onChange={(e) => setGForm({ ...gForm, tipo: e.target.value })}>
-                {opciones.tipos.map((v) => <option key={v}>{v}</option>)}
-              </select>
-              <label>Categoría de gasto (opcional)</label>
-              <input list="lista-categorias" placeholder="Ej: Comida, Salidas, Auto..." value={gForm.categoria} onChange={(e) => setGForm({ ...gForm, categoria: e.target.value })} />
-              <datalist id="lista-categorias">{opciones.categorias.map((c) => <option key={c} value={c} />)}</datalist>
-              <label>Descripción</label>
-              <input placeholder="Ej: Zapatillas" value={gForm.desc} onChange={(e) => setGForm({ ...gForm, desc: e.target.value })} />
-              <label>Fecha de compra / del ingreso</label>
-              <input type="date" value={gForm.fecha} onChange={(e) => setGForm({ ...gForm, fecha: e.target.value })} />
-              <label>Cantidad de cuotas</label>
-              <input type="number" min="1" value={gForm.cuotas} onChange={(e) => setGForm({ ...gForm, cuotas: e.target.value })} />
-              <label>Moneda</label>
-              <select value={gForm.moneda} onChange={(e) => setGForm({ ...gForm, moneda: e.target.value })}>
-                {opciones.monedas.map((v) => <option key={v}>{v}</option>)}
-              </select>
-              <label>Monto por cuota / monto del ingreso</label>
-              <input type="number" placeholder="0" value={gForm.monto} onChange={(e) => setGForm({ ...gForm, monto: e.target.value })} />
-
-              <CamposPago form={gForm} setForm={setGForm} opciones={opciones} />
-
-              <button className="btn-primary" onClick={agregar}>Agregar a la planilla</button>
-              {addStatus && <div className="status">{addStatus}</div>}
+              {opciones.bancos.length === 0 ? (
+                <div className="empty-hint">No hay tarjetas en la tabla Tarjeta/Cierre de la planilla.</div>
+              ) : opciones.bancos.map((banco) => {
+                const valor = cierreForm[banco] ?? (cierreDias[banco] ? String(cierreDias[banco]) : "");
+                const sinCambios = String(valor) === (cierreDias[banco] ? String(cierreDias[banco]) : "");
+                return (
+                  <div className="cierre-row" key={banco}>
+                    <span className="cierre-banco">{banco}</span>
+                    <span className="cierre-campo">
+                      <span className="muted">Cierra el día</span>
+                      <input
+                        type="number" min="1" max="31" placeholder="—" className="cuotas-input"
+                        value={valor}
+                        onChange={(e) => setCierreForm({ ...cierreForm, [banco]: e.target.value })}
+                      />
+                    </span>
+                    <button className="btn-secondary cierre-guardar" disabled={sinCambios} onClick={() => guardarCierre(banco)}>Guardar</button>
+                  </div>
+                );
+              })}
+              {cierreStatus && <div className="status">{cierreStatus}</div>}
             </section>
 
-            <section className="card">
-              <div className="card-head">
-                <h2>🧪 Simular compra (sin guardar)</h2>
-              </div>
-              <label>Monto por cuota</label>
-              <input type="number" placeholder="0" value={simForm.monto} onChange={(e) => setSimForm({ ...simForm, monto: e.target.value })} />
-              <label>Moneda</label>
-              <select value={simForm.moneda} onChange={(e) => setSimForm({ ...simForm, moneda: e.target.value })}>
-                {opciones.monedas.map((v) => <option key={v}>{v}</option>)}
-              </select>
-              <label>Cantidad de cuotas</label>
-              <input type="number" min="1" value={simForm.cuotas} onChange={(e) => setSimForm({ ...simForm, cuotas: e.target.value })} />
-              <label>Fecha de compra</label>
-              <input type="date" value={simForm.fecha} onChange={(e) => setSimForm({ ...simForm, fecha: e.target.value })} />
-
-              <CamposPago form={simForm} setForm={setSimForm} opciones={opciones} />
-
-              <div className="btn-pair">
-                <button className="btn-secondary" onClick={simular}>Simular impacto</button>
-                <button className="btn-primary" onClick={guardarSimulacion}>Guardar esta compra</button>
-              </div>
-              {simStatus && <div className="status">{simStatus}</div>}
-            </section>
-          </div>
-        )}
-
-        {tab === "historico" && (
-          <div className="stack">
-            <section className="card">
-              <div className="card-head-row">
-                <h2>Compras de {MESES_NOMBRE[histMes.month].toLowerCase()} {histMes.year}</h2>
-                <div className="filtro-inline">
-                  <button className="btn-icon" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, -1))}>‹</button>
-                  <select value={histMes.month} onChange={(e) => setHistMes({ ...histMes, month: Number(e.target.value) })}>
-                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
-                  </select>
-                  <select value={histMes.year} onChange={(e) => setHistMes({ ...histMes, year: Number(e.target.value) })}>
-                    {histAnios.map((y) => <option key={y} value={y}>{y}</option>)}
-                  </select>
-                  <button className="btn-icon" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, 1))}>›</button>
-                  <button className="btn-ghost" onClick={() => setHistMes({ month: hoy.getMonth(), year: hoy.getFullYear() })}>Hoy</button>
+            <div className="bankcards-row">
+              {porTarjeta.length === 0 && <div className="empty-hint">Todavía no tenés compras con tarjeta de crédito cargadas.</div>}
+              {porTarjeta.map((g) => (
+                <div
+                  key={g.medio}
+                  className={`bankcard ${cardTheme(g.banco)} ${grupoActivo?.medio === g.medio ? "active" : ""}`}
+                  onClick={() => setTarjetaActiva(g.medio)}
+                >
+                  <div className="bankcard-top">
+                    <span className="bankcard-brand">{g.medio}</span>
+                    <span className="bankcard-chip"></span>
+                  </div>
+                  <div className="bankcard-dots">•••• •••• •••• {iniciales(g.medio)}</div>
+                  <div className="bankcard-bottom">
+                    <span className="bankcard-name">
+                      {totalesMesPorTarjeta[g.medio]?.cuotas || 0} cuotas · {totalesMesPorTarjeta[g.medio]?.fijos || 0} fijos · {MESES_NOMBRE[tarjetaMesFiltro.month].slice(0, 3)}
+                    </span>
+                    <span className="bankcard-total">{fmt(totalesMesPorTarjeta[g.medio]?.total || 0)}</span>
+                  </div>
                 </div>
-              </div>
+              ))}
+            </div>
 
-              {histItemsMes === null ? (
-                <div className="empty-hint">Cargando...</div>
-              ) : histCategorias.length === 0 ? (
-                <div className="empty-hint">No hay compras cargadas en ese mes.</div>
-              ) : (
-                <>
-                  <div className="chips">
-                    <button className={`chip ${histCatActiva === "" ? "active" : ""}`} onClick={() => setHistCat("")}>Todas</button>
-                    {histCategorias.map(([cat, total]) => (
-                      <button key={cat} className={`chip ${histCatActiva === cat ? "active" : ""}`} onClick={() => setHistCat(cat)}>
-                        {cat} · {fmt(total)}
+            {grupoActivo && (
+              <>
+                <section className="card">
+                  <div className="card-head-row">
+                    <h2>{grupoActivo.medio}</h2>
+                    <div className="tarjeta-totales">
+                      <span className="badge badge-total">{fmt(tarjetaMesTotal)}</span>
+                      {tarjetaMesTotalUSD > 0 && <span className="badge badge-neutral">≈ {fmtUSD(tarjetaMesTotalUSD)}</span>}
+                    </div>
+                  </div>
+
+                  <div className="subsection-title">Cuotas por mes</div>
+                  <div className="month-nav" style={{ marginBottom: 14 }}>
+                    <button className="btn-icon" onClick={() => irMesTarjeta(-1)}>‹</button>
+                    <span className="month-nav-label">{MESES_NOMBRE[tarjetaMesFiltro.month]} {tarjetaMesFiltro.year}</span>
+                    <button className="btn-icon" onClick={() => irMesTarjeta(1)}>›</button>
+                  </div>
+
+                  {tarjetaMesCuotas === null ? (
+                    <div className="empty-hint">Cargando...</div>
+                  ) : tarjetaMesItems.length === 0 ? (
+                    <div className="empty-hint">Esta tarjeta no tiene gastos en ese mes.</div>
+                  ) : (
+                    <>
+                      {tarjetaMesCuotasItems.length > 0 && (
+                        <div className="table-scroll">
+                          <table>
+                            <thead>
+                              <tr><th>Compra</th><th className="num">Monto</th><th>Cuota</th></tr>
+                            </thead>
+                            <tbody>
+                              {tarjetaMesCuotasItems.map((c, i) => (
+                                <tr key={i}>
+                                  <td className="strong">{c.desc}</td>
+                                  <td className="num">{celdaEquivalencia(c.moneda, c.montoARS, c.montoUSD)}</td>
+                                  <td><span className="badge badge-info">Cuota {c.cuota}</span></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {tarjetaMesFijosItems.length > 0 && (
+                        <>
+                          <div className="subsection-title">Gastos fijos · se cobran todos los meses, sin cuotas</div>
+                          <div className="table-scroll">
+                            <table>
+                              <tbody>
+                                {tarjetaMesFijosItems.map((c, i) => (
+                                  <tr key={i}>
+                                    <td className="strong">{c.desc}</td>
+                                    <td className="num">{celdaEquivalencia(c.moneda, c.montoARS, c.montoUSD)}</td>
+                                    <td><span className="badge badge-fijo">Fijo mensual</span></td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
+
+                      <div className="cuenta-total"><span>Total del mes</span><strong>{fmt(tarjetaMesTotal)}</strong></div>
+                    </>
+                  )}
+                </section>
+
+                <section className="card">
+                  <div className="subsection-title">
+                    Historial completo · {grupoActivo.gastos.length} gastos · total histórico {fmt(grupoActivo.totalARS)}
+                  </div>
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Fecha</th><th>Descripción</th><th>Tipo</th><th>Categoría</th>
+                          <th>Cuotas</th><th className="num">Monto</th><th>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {grupoActivo.gastos.map((h) => (
+                          <tr key={h.row}>
+                            <td className="muted">{h.fecha}</td>
+                            <td className="strong">{h.desc}</td>
+                            <td>{h.tipo}</td>
+                            <td className="muted">{h.categoria || "—"}</td>
+                            <td>{h.gasto === "Gasto fijo" ? <span className="badge badge-fijo">Fijo mensual</span> : h.cuotas}</td>
+                            <td className="num">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</td>
+                            <td>{h.gasto === "Gasto fijo" ? <span className="muted">—</span> : estadoBadge(h.estado)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </>
+            )}
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === "cargar" && (() => {
+          const esCompra = gForm.gasto === "Gasto variable";
+          const esFijo = gForm.gasto === "Gasto fijo";
+          const esIngreso = gForm.gasto === "Ingreso extra";
+          const esTarjeta = gForm.formaPago === FORMA_TARJETA;
+          const cuotasN = Math.max(1, Number(gForm.cuotas) || 1);
+          const montoN = Number(gForm.monto) || 0;
+          const usd = gForm.moneda === "USD";
+          const fmtM = (n) => (usd ? fmtUSD2(n) : fmt(n));
+          const equiv = (n) => (usd && dolarBlue ? ` (≈ ${fmt(n * dolarBlue)} al dólar blue)` : "");
+          const medioTxt = esIngreso ? "" : (esTarjeta ? [gForm.marca, gForm.banco].filter(Boolean).join(" ") : (gForm.banco || gForm.formaPago));
+          const [fy, fm] = String(gForm.fecha || "").split("-");
+          const mesFecha = fm ? `${MESES_NOMBRE[Number(fm) - 1]} ${fy}` : "";
+          const set = (patch) => setGForm({ ...gForm, ...patch });
+
+          // Mes en que se paga una compra con tarjeta: cierre indicado a mano o día de cierre de la tarjeta.
+          let mesPagoKey = null;
+          if (esCompra && esTarjeta && fm) {
+            if (gForm.fechaCierre) {
+              const [cy, cm] = gForm.fechaCierre.split("-").map(Number);
+              mesPagoKey = shiftMonthKey(`${cy}-${cm - 1}`, 1);
+            } else if (cierreDias[gForm.banco]) {
+              mesPagoKey = mesPagoCredito(new Date(Number(fy), Number(fm) - 1, Number(String(gForm.fecha).split("-")[2])), cierreDias[gForm.banco]);
+            }
+          }
+
+          let resumen = "Completá la descripción y el monto para ver cómo queda.";
+          if (montoN > 0) {
+            if (esCompra) {
+              const total = montoN * cuotasN;
+              resumen = cuotasN > 1
+                ? `${cuotasN} cuotas de ${fmtM(montoN)} · total ${fmtM(total)}${equiv(total)}`
+                : `Un solo pago de ${fmtM(montoN)}${equiv(montoN)}`;
+              if (medioTxt) resumen += ` con ${medioTxt}`;
+              if (mesPagoKey) resumen += ` · se paga con el sueldo de ${labelTramo(mesPagoKey)}${cuotasN > 1 ? " (primera cuota)" : ""}`;
+            } else if (esFijo) {
+              resumen = `Se suman ${fmtM(montoN)} a tus gastos todos los meses${equiv(montoN)}`;
+              if (medioTxt) resumen += ` (${medioTxt})`;
+            } else {
+              resumen = `Se suman ${fmtM(montoN)} a tus ingresos${mesFecha ? ` de ${mesFecha}` : ""}${equiv(montoN)}`;
+            }
+          }
+
+          const recientes = historico ? [...historico].sort((a, b) => b.row - a.row).slice(0, 8) : [];
+          const claseInfo = (g) => ({ "Gasto fijo": ["Fijo", "badge-neutral"], "Gasto variable": ["Compra", "badge-info"], "Ingreso extra": ["Ingreso", "badge-ok"] }[g] || [g, "badge-neutral"]);
+
+          return (
+            <div className="stack cargar-layout">
+              <section className="card form-card">
+                <div className="card-head">
+                  <h2>Cargar a la planilla</h2>
+                  <p className="hint" style={{ margin: "4px 0 0" }}>Elegí qué es y completá los datos. Abajo ves cómo va a quedar antes de guardar.</p>
+                </div>
+
+                <div className="form-step">
+                  <div className="step-title"><span className="step-num">1</span>¿Qué querés cargar?</div>
+                  <div className="clase-picker">
+                    {CLASES_CARGA.map((c) => (
+                      <button key={c.gasto} type="button" className={`clase-opt ${gForm.gasto === c.gasto ? "active" : ""}`} onClick={() => set({ gasto: c.gasto })}>
+                        <span className="clase-titulo">{c.titulo}</span>
+                        <span className="clase-ayuda">{c.ayuda}</span>
                       </button>
                     ))}
                   </div>
-                  <p className="hint" style={{ margin: "0 0 8px" }}>
-                    {histCantidadMes} compras · total <span className="strong">{fmt(histTotalMes)}</span>
-                  </p>
+                </div>
 
-                  {histGrupos.map((g) => (
-                    <div className="cat-block" key={g.cat}>
-                      <div className="cat-head">
-                        <span className="cat-name">{g.cat}</span>
-                        <span className="cat-total">{fmt(g.total)}</span>
+                <div className="form-step">
+                  <div className="step-title"><span className="step-num">2</span>Qué es</div>
+                  <label>Descripción</label>
+                  <input placeholder={esIngreso ? "Ej: Venta, Reintegro..." : (esFijo ? "Ej: Netflix, Seguro del auto..." : "Ej: Zapatillas")} value={gForm.desc} onChange={(e) => set({ desc: e.target.value })} />
+                  {!esIngreso && (
+                    <div className="form-grid">
+                      <div>
+                        <label>Tipo</label>
+                        <select value={gForm.tipo} onChange={(e) => set({ tipo: e.target.value })}>
+                          {opciones.tipos.map((v) => <option key={v}>{v}</option>)}
+                        </select>
                       </div>
-                      <div className="cat-bar"><span style={{ width: `${histTotalMes ? (g.total / histTotalMes) * 100 : 0}%` }}></span></div>
-                      {g.items.map((h) => (
-                        <div className="cat-item" key={h.row}>
-                          <div className="cat-item-left">
-                            <span className="cat-item-medio">{String(h.dia).padStart(2, "0")}/{String(h.m + 1).padStart(2, "0")}</span>
-                            <span className="strong">{h.desc}</span>
-                            <span className="cat-item-medio">{h.medio}</span>
-                            {Number(h.cuotas) > 1 && <span className="badge badge-info">{h.cuotas} cuotas · total {fmt(h.totalARS)}</span>}
-                          </div>
-                          <div className="cat-item-monto">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</div>
-                        </div>
-                      ))}
+                      <div>
+                        <label>Categoría (opcional)</label>
+                        <input list="lista-categorias" placeholder="Ej: Comida, Salidas, Auto..." value={gForm.categoria} onChange={(e) => set({ categoria: e.target.value })} />
+                        <datalist id="lista-categorias">{opciones.categorias.map((c) => <option key={c} value={c} />)}</datalist>
+                      </div>
                     </div>
-                  ))}
-                </>
-              )}
-            </section>
+                  )}
+                </div>
 
-            <section className="card">
-              <div className="card-head">
-                <h2>Evolutivo de compras (valor de cuota)</h2>
-              </div>
-              {histEvolutivo.length === 0 ? (
-                <div className="empty-hint">Cargando...</div>
-              ) : (
-                <>
-                  <div className="chart-box"><canvas ref={histCanvasRef}></canvas></div>
-                  <div className="subsection-title">En qué más gasté cada mes</div>
-                  <div className="top-mes-grid">
-                    {histEvolutivo.map((m) => (
-                      <div className="top-mes" key={m.key}>
-                        <div className="top-mes-label">{m.label}</div>
-                        <div className="top-mes-cat">{m.topCat ? `${m.topCat[0]} · ${fmt(m.topCat[1])}` : "—"}</div>
-                        <div className="top-mes-sub">{m.topItem ? `Mayor compra: ${m.topItem.desc} (${fmt(m.topItem.total)})` : "Sin compras"}</div>
-                      </div>
-                    ))}
+                <div className="form-step">
+                  <div className="step-title"><span className="step-num">3</span>Cuánto y cuándo</div>
+                  <div className="form-grid">
+                    <div>
+                      <label>Moneda</label>
+                      <Segmented value={gForm.moneda} onChange={(v) => set({ moneda: v })} options={opciones.monedas.length ? opciones.monedas : ["ARS", "USD"]} />
+                    </div>
+                    <div>
+                      <label>{esCompra && cuotasN > 1 ? "Monto de cada cuota" : "Monto"}</label>
+                      <input type="number" min="0" placeholder="0" value={gForm.monto} onChange={(e) => set({ monto: e.target.value })} />
+                    </div>
                   </div>
-                </>
-              )}
-            </section>
-          </div>
-        )}
+                  <div className="form-grid">
+                    <div>
+                      <label>{esCompra ? "Fecha de compra" : (esFijo ? "Fecha de alta" : "Fecha del ingreso")}</label>
+                      <input type="date" value={gForm.fecha} onChange={(e) => set({ fecha: e.target.value })} />
+                    </div>
+                    {esCompra && (
+                      <div>
+                        <label>Cuotas</label>
+                        <div className="cuotas-row">
+                          <Segmented
+                            value={String(cuotasN)}
+                            onChange={(v) => set({ cuotas: Number(v) })}
+                            options={["1", "3", "6", "12"]}
+                          />
+                          <input type="number" min="1" className="cuotas-input" value={gForm.cuotas} onChange={(e) => set({ cuotas: e.target.value })} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {!esIngreso && (
+                  <div className="form-step">
+                    <div className="step-title"><span className="step-num">4</span>Cómo se paga</div>
+                    <label>Forma de pago</label>
+                    <Segmented
+                      value={gForm.formaPago}
+                      onChange={(v) => set({ formaPago: v })}
+                      options={opciones.formasPago.map((v) => ({ value: v, label: v === FORMA_TARJETA ? "Tarjeta" : v }))}
+                    />
+                    <div className="form-grid">
+                      {gForm.formaPago !== "Efectivo" && (
+                        <div>
+                          <label>Banco</label>
+                          <select value={gForm.banco} onChange={(e) => set({ banco: e.target.value })}>
+                            <option value="">— Ninguno —</option>
+                            {opciones.bancos.map((v) => <option key={v}>{v}</option>)}
+                          </select>
+                        </div>
+                      )}
+                      {esTarjeta && (
+                        <div>
+                          <label>Marca de la tarjeta</label>
+                          <Segmented value={gForm.marca} onChange={(v) => set({ marca: v })} options={opciones.marcas} />
+                        </div>
+                      )}
+                    </div>
+                    {esTarjeta && esCompra && (
+                      <>
+                        <label>Fecha de cierre de esta compra (opcional)</label>
+                        <input type="date" value={gForm.fechaCierre} onChange={(e) => set({ fechaCierre: e.target.value })} />
+                        <p className="hint" style={{ margin: "6px 0 0" }}>
+                          Si la cargás, las cuotas se calculan desde esta fecha exacta en vez de inferir el jueves de cierre.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div className="resumen-box">
+                  <div className="resumen-label">Así queda</div>
+                  <div className="resumen-text">{gForm.desc ? <strong>{gForm.desc}: </strong> : null}{resumen}</div>
+                </div>
+
+                <button className="btn-primary btn-big" onClick={agregar}>Guardar en la planilla</button>
+                {addStatus && <div className="status">{addStatus}</div>}
+              </section>
+
+              <section className="card">
+                <div className="card-head-row">
+                  <h2>Gastos fijos cargados</h2>
+                  <span className="muted">{gastosFijos.length} · {fmt(gastosFijos.reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0))} por mes</span>
+                </div>
+                {renderFijos()}
+              </section>
+
+              <section className="card">
+                <div className="card-head"><h2>Lo último que cargaste</h2></div>
+                {recientes.length === 0 ? (
+                  <div className="empty-hint">Todavía no hay movimientos.</div>
+                ) : recientes.map((h) => {
+                  const [txt, cls] = claseInfo(h.gasto);
+                  return (
+                    <div className="reciente-row" key={h.row}>
+                      <div className="reciente-main">
+                        <span className="strong">{h.desc}</span>
+                        <span className="cat-item-medio">{h.fecha}{h.medio ? ` · ${h.medio}` : ""}</span>
+                      </div>
+                      <div className="reciente-side">
+                        <span className={`badge ${cls}`}>{txt}{h.gasto === "Gasto variable" && Number(h.cuotas) > 1 ? ` · ${h.cuotas} cuotas` : ""}</span>
+                        <span className="reciente-monto">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            </div>
+          );
+        })()}
+
       </main>
     </div>
   );
