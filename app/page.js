@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
-import { mesPagoCredito, shiftMonthKey } from "@/lib/closing";
+import { mesPagoCredito, mesCierreDesdeFechaCierre, shiftMonthKey } from "@/lib/closing";
 
 const MESES_NOMBRE = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -2013,8 +2013,11 @@ export default function Home() {
           let mesPagoKey = null;
           if (esCompra && esTarjeta && fm) {
             if (gForm.fechaCierre) {
-              const [cy, cm] = gForm.fechaCierre.split("-").map(Number);
-              mesPagoKey = shiftMonthKey(`${cy}-${cm - 1}`, 1);
+              // Cierre cargado a mano: si la compra es del día del cierre o posterior, ya cerró y
+              // pertenece al cierre del mes siguiente (se paga un mes más tarde).
+              const [cy, cm, cd] = gForm.fechaCierre.split("-").map(Number);
+              const compra = new Date(Number(fy), Number(fm) - 1, Number(String(gForm.fecha).split("-")[2]));
+              mesPagoKey = shiftMonthKey(mesCierreDesdeFechaCierre(compra, new Date(cy, cm - 1, cd)), 1);
             } else if (cierreDias[gForm.banco]) {
               mesPagoKey = mesPagoCredito(new Date(Number(fy), Number(fm) - 1, Number(String(gForm.fecha).split("-")[2])), cierreDias[gForm.banco]);
             }
