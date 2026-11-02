@@ -138,6 +138,50 @@ function Segmented({ value, onChange, options }) {
   );
 }
 
+// Íconos SVG de trazo (un solo set), en lugar de emojis: heredan el color del texto.
+const ICONOS = {
+  plus: <path d="M12 5v14M5 12h14" />,
+  x: <path d="M18 6 6 18M6 6l12 12" />,
+  check: <path d="M20 6 9 17l-5-5" />,
+  "check-circle": <><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></>,
+  "x-circle": <><circle cx="12" cy="12" r="10" /><path d="m15 9-6 6M9 9l6 6" /></>,
+  info: <><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></>,
+  alert: <><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></>,
+  card: <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></>,
+  bank: <path d="M3 21h18M5 21V10M9 21V10M15 21V10M19 21V10M3 10l9-6 9 6" />
+};
+
+function Icon({ name, size = 18 }) {
+  return (
+    <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      {ICONOS[name]}
+    </svg>
+  );
+}
+
+// Mensaje de resultado de una acción (guardar, etc.). Acepta el texto con prefijo ✅/❌ y lo muestra con ícono.
+function StatusMsg({ texto }) {
+  const t = String(texto || "");
+  const ok = t.startsWith("✅");
+  const error = t.startsWith("❌");
+  const limpio = t.replace(/^(✅|❌)\s*/, "");
+  return (
+    <div className={`status ${ok ? "status-ok" : ""} ${error ? "status-error" : ""}`} role={error ? "alert" : "status"}>
+      {(ok || error) && <Icon name={ok ? "check-circle" : "x-circle"} size={15} />}
+      <span>{limpio}</span>
+    </div>
+  );
+}
+
+// Esqueleto de carga: ocupa el lugar del contenido para que la página no salte al llegar los datos.
+function Skeleton({ filas = 3 }) {
+  return (
+    <div className="skeleton" role="status" aria-busy="true" aria-label="Cargando">
+      {Array.from({ length: filas }).map((_, i) => <span className="skeleton-bar" key={i} style={{ width: `${92 - i * 14}%` }} />)}
+    </div>
+  );
+}
+
 // Alertas objetivas, calculadas solo con los números de la proyección que se le pase.
 function calcAlertas(meses) {
   const lista = [];
@@ -219,6 +263,9 @@ export default function Home() {
     gasto: "Gasto variable", tipo: "", categoria: "", ...pagoInicial, desc: "", fecha: hoyISO, cuotas: 1, moneda: "ARS", monto: ""
   });
   const [addStatus, setAddStatus] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [cargandoInicial, setCargandoInicial] = useState(true);
+  const [erroresForm, setErroresForm] = useState({});
   const [cargarAbierto, setCargarAbierto] = useState(false);
 
   const [histDesde, setHistDesde] = useState("");
@@ -329,25 +376,38 @@ export default function Home() {
     if (id === "gastos" && gastosHist === null) cargarGastosMes();
   }
 
-  useEffect(() => {
-    if (!cargarAbierto) return undefined;
-    const onKey = (e) => { if (e.key === "Escape") setCargarAbierto(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [cargarAbierto]);
+  // Cerrar Cargar: si hay datos escritos sin guardar, pide confirmación para no perderlos.
+  function cerrarCargar() {
+    const sinGuardar = String(gForm.desc).trim() !== "" || Number(gForm.monto) > 0;
+    if (sinGuardar && !confirm("Tenés datos sin guardar. ¿Cerrar igual?")) return;
+    setErroresForm({});
+    setCargarAbierto(false);
+  }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial de datos vía fetch
-    cargarOpciones();
-    cargarTablero(); // fija mesesBase (siempre relativo a hoy, para el header y por-cuenta)
-    // eslint-disable-next-line react-hooks/immutability -- el efecto corre después del render
-    verPeriodo(mesObjetivo.month, mesObjetivo.year); // la tabla/gráfico arrancan en el mes de referencia
-    cargarGastosFijos();
-    buscarHistorico("", "");
-    cargarCuotasMes();
-    cargarTarjetaMes();
+    if (!cargarAbierto) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") cerrarCargar(); };
+    window.addEventListener("keydown", onKey);
+    const overflowPrevio = document.body.style.overflow;
+    document.body.style.overflow = "hidden"; // el fondo no se desplaza detrás de la ventana
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = overflowPrevio;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cargarAbierto, gForm]);
+
+  useEffect(() => {
+    cargarInicial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // "Cuotas del mes" se trae recién al abrir Tarjetas (una lectura menos en la carga inicial).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga bajo demanda vía fetch
+    if (tab === "tarjetas" && cuotasMes === null) cargarCuotasMes().catch((e) => setLoadError(mensajeDeError(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   useEffect(() => {
     if (!canvasRef.current || tab !== "proyeccion" || proyVista !== "proyeccion") return;
@@ -479,9 +539,42 @@ export default function Home() {
     await verPeriodo(mesObjetivo.month, mesObjetivo.year);
   }
 
+  // Mensaje entendible para el error más común: el límite de lecturas por minuto de Google Sheets.
+  function mensajeDeError(e) {
+    const m = String((e && e.message) || e || "");
+    if (/quota|rate limit|429/i.test(m)) return "Google Sheets limitó las lecturas por un momento. Esperá un minuto y reintentá.";
+    return m || "No se pudieron cargar los datos.";
+  }
+
+  async function cargarInicial() {
+    setLoadError("");
+    setCargandoInicial(true);
+    const resultados = await Promise.allSettled([
+      cargarOpciones(),
+      cargarTablero(), // fija mesesBase (siempre relativo a hoy, para el header y por-cuenta)
+      verPeriodo(mesObjetivo.month, mesObjetivo.year), // la tabla/gráfico arrancan en el mes de referencia
+      cargarGastosFijos(),
+      buscarHistorico("", ""),
+      cargarTarjetaMes()
+    ]);
+    const fallo = resultados.find((r) => r.status === "rejected");
+    if (fallo) setLoadError(mensajeDeError(fallo.reason));
+    setCargandoInicial(false);
+  }
+
   async function agregar() {
-    if (!String(gForm.desc).trim()) { setAddStatus("❌ Escribí una descripción."); return; }
-    if (!(Number(gForm.monto) > 0)) { setAddStatus("❌ Ingresá un monto mayor a 0."); return; }
+    const errores = {};
+    if (!String(gForm.desc).trim()) errores.desc = "Escribí qué es (por ejemplo: Zapatillas).";
+    if (!(Number(gForm.monto) > 0)) errores.monto = "Ingresá un monto mayor a 0.";
+    if (gForm.gasto !== "Ingreso extra" && !gForm.categoria) errores.categoria = "Elegí una categoría.";
+    setErroresForm(errores);
+    const primero = Object.keys(errores)[0];
+    if (primero) {
+      setAddStatus("");
+      const el = document.getElementById("cargar-" + primero);
+      if (el) el.focus();
+      return;
+    }
     setAddStatus("Guardando...");
     try {
       const esIngreso = gForm.gasto === "Ingreso extra";
@@ -991,7 +1084,7 @@ export default function Home() {
             </span>
           </div>
           <button className={`btn-cargar ${cargarAbierto ? "active" : ""}`} onClick={() => { setAddStatus(""); setCargarAbierto(true); }}>
-            ＋ Cargar
+            <Icon name="plus" size={16} /> Cargar
           </button>
         </div>
         <nav className="tabnav">
@@ -1008,10 +1101,17 @@ export default function Home() {
       </header>
 
       <main className="content">
+        {loadError && (
+          <div className="load-error" role="alert">
+            <Icon name="alert" size={18} />
+            <span>{loadError}</span>
+            <button className="btn-secondary" onClick={cargarInicial} disabled={cargandoInicial}>{cargandoInicial ? "Reintentando..." : "Reintentar"}</button>
+          </div>
+        )}
         {tab === "inicio" && (
           <div className="stack">
             {!mesInicio ? (
-              <section className="card"><div className="empty-hint">Cargando...</div></section>
+              <section className="card"><Skeleton /></section>
             ) : (() => {
               const mo = mesInicio;
               const est = estadoMes(mo);
@@ -1028,9 +1128,9 @@ export default function Home() {
                       <p className="page-sub">Cómo viene el mes, de un vistazo.</p>
                     </div>
                     <div className="month-nav">
-                      <button className="btn-icon" disabled={inicioIdx <= 0} onClick={() => setInicioIdx(Math.max(0, inicioIdx - 1))}>‹</button>
+                      <button className="btn-icon" aria-label="Mes anterior" disabled={inicioIdx <= 0} onClick={() => setInicioIdx(Math.max(0, inicioIdx - 1))}>‹</button>
                       <span className="month-nav-label">{mo.label}</span>
-                      <button className="btn-icon" disabled={inicioIdx >= ultimo} onClick={() => setInicioIdx(Math.min(ultimo, inicioIdx + 1))}>›</button>
+                      <button className="btn-icon" aria-label="Mes siguiente" disabled={inicioIdx >= ultimo} onClick={() => setInicioIdx(Math.min(ultimo, inicioIdx + 1))}>›</button>
                     </div>
                   </div>
 
@@ -1122,7 +1222,7 @@ export default function Home() {
                       </div>
                       {mirar.map((a, i) => (
                         <div className={`alerta-row alerta-${a.nivel}`} key={i}>
-                          <span className="alerta-icon">{a.nivel === "ok" ? "✓" : (a.nivel === "info" ? "ℹ" : "⚠")}</span>
+                          <span className="alerta-icon"><Icon name={a.nivel === "ok" ? "check-circle" : (a.nivel === "info" ? "info" : "alert")} size={16} /></span>
                           <div><strong>{a.mes}</strong> — {a.texto}</div>
                         </div>
                       ))}
@@ -1148,14 +1248,14 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="filtro-inline">
-                  <button className="btn-icon" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, -1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>‹</button>
+                  <button className="btn-icon" aria-label="Mes anterior" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, -1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>‹</button>
                   <select value={filtroMes} onChange={(e) => { setFiltroMes(Number(e.target.value)); verPeriodo(Number(e.target.value), filtroAnio); }}>
                     {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
                   </select>
                   <select value={filtroAnio} onChange={(e) => { setFiltroAnio(Number(e.target.value)); verPeriodo(filtroMes, Number(e.target.value)); }}>
                     {Array.from({ length: 6 }, (_, i) => hoy.getFullYear() - 2 + i).map((y) => <option key={y} value={y}>{y}</option>)}
                   </select>
-                  <button className="btn-icon" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, 1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>›</button>
+                  <button className="btn-icon" aria-label="Mes siguiente" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, 1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>›</button>
                   <button className="btn-ghost" onClick={verHoy}>Hoy</button>
                 </div>
               </div>
@@ -1236,7 +1336,7 @@ export default function Home() {
                 <div className="card-head"><h2>Meses a mirar</h2></div>
                 {alertasProy.slice(0, 8).map((a, i) => (
                   <div className={`alerta-row alerta-${a.nivel}`} key={i}>
-                    <span className="alerta-icon">{a.nivel === "ok" ? "✓" : (a.nivel === "info" ? "ℹ" : "⚠")}</span>
+                    <span className="alerta-icon"><Icon name={a.nivel === "ok" ? "check-circle" : (a.nivel === "info" ? "info" : "alert")} size={16} /></span>
                     <div><strong>{a.mes}</strong> — {a.texto}</div>
                   </div>
                 ))}
@@ -1297,7 +1397,7 @@ export default function Home() {
                   <button className="btn-primary" onClick={guardarConfig}>Guardar</button>
                 </div>
               </div>
-              {cfgStatus && <div className="status">{cfgStatus}</div>}
+              {cfgStatus && <StatusMsg texto={cfgStatus} />}
             </section>
               </>
             )}
@@ -1353,7 +1453,7 @@ export default function Home() {
                   <button className="btn-primary" onClick={agregarTramoSueldo}>Agregar tramo</button>
                 </div>
               </div>
-              {sueldoStatus && <div className="status">{sueldoStatus}</div>}
+              {sueldoStatus && <StatusMsg texto={sueldoStatus} />}
             </section>
               </>
             )}
@@ -1372,7 +1472,7 @@ export default function Home() {
               <div className="card-head-row" style={{ marginBottom: 0 }}>
                 <h2>Gastos de {MESES_NOMBRE[gastosMesFiltro.month].toLowerCase()} {gastosMesFiltro.year}</h2>
                 <div className="filtro-inline">
-                  <button className="btn-icon" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, -1); elegirMesGastos(n.month, n.year); }}>‹</button>
+                  <button className="btn-icon" aria-label="Mes anterior" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, -1); elegirMesGastos(n.month, n.year); }}>‹</button>
                   <select value={gastosMesFiltro.month} onChange={(e) => elegirMesGastos(Number(e.target.value), gastosMesFiltro.year)}>
                     {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
                   </select>
@@ -1382,7 +1482,7 @@ export default function Home() {
                       (_, i) => gastosVentanaInicio.year + i
                     ).map((y) => <option key={y} value={y}>{y}</option>)}
                   </select>
-                  <button className="btn-icon" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, 1); elegirMesGastos(n.month, n.year); }}>›</button>
+                  <button className="btn-icon" aria-label="Mes siguiente" onClick={() => { const n = shiftMes(gastosMesFiltro.month, gastosMesFiltro.year, 1); elegirMesGastos(n.month, n.year); }}>›</button>
                   <button className="btn-ghost" onClick={() => elegirMesGastos(mesObjetivo.month, mesObjetivo.year)}>Hoy</button>
                 </div>
               </div>
@@ -1395,20 +1495,20 @@ export default function Home() {
               <div className="card-head-row">
                 <h2>Compras de {MESES_NOMBRE[histMes.month].toLowerCase()} {histMes.year}</h2>
                 <div className="filtro-inline">
-                  <button className="btn-icon" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, -1))}>‹</button>
+                  <button className="btn-icon" aria-label="Mes anterior" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, -1))}>‹</button>
                   <select value={histMes.month} onChange={(e) => setHistMes({ ...histMes, month: Number(e.target.value) })}>
                     {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
                   </select>
                   <select value={histMes.year} onChange={(e) => setHistMes({ ...histMes, year: Number(e.target.value) })}>
                     {histAnios.map((y) => <option key={y} value={y}>{y}</option>)}
                   </select>
-                  <button className="btn-icon" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, 1))}>›</button>
+                  <button className="btn-icon" aria-label="Mes siguiente" onClick={() => setHistMes(shiftMes(histMes.month, histMes.year, 1))}>›</button>
                   <button className="btn-ghost" onClick={() => setHistMes({ month: hoy.getMonth(), year: hoy.getFullYear() })}>Hoy</button>
                 </div>
               </div>
 
               {histItemsMes === null ? (
-                <div className="empty-hint">Cargando...</div>
+                <Skeleton />
               ) : histCategorias.length === 0 ? (
                 <div className="empty-hint">No hay compras cargadas en ese mes.</div>
               ) : (
@@ -1455,7 +1555,7 @@ export default function Home() {
                 <h2>Evolutivo de compras (valor de cuota)</h2>
               </div>
               {histEvolutivo.length === 0 ? (
-                <div className="empty-hint">Cargando...</div>
+                <Skeleton />
               ) : (
                 <>
                   <div className="chart-box"><canvas ref={histCanvasRef}></canvas></div>
@@ -1480,7 +1580,7 @@ export default function Home() {
               </section>
             ) : gastosVista === "dashboard" ? (
               gastosKpis === null ? (
-                <section className="card"><div className="empty-hint">Cargando...</div></section>
+                <section className="card"><Skeleton /></section>
               ) : (
                 <>
                   <section className="card">
@@ -1596,7 +1696,7 @@ export default function Home() {
               <>
                 <section className="card">
                   {gastosItemsMes === null ? (
-                    <div className="empty-hint">Cargando...</div>
+                    <Skeleton />
                   ) : gastosCategorias.length === 0 ? (
                     <div className="empty-hint">No hay gastos en ese mes.</div>
                   ) : (
@@ -1641,7 +1741,7 @@ export default function Home() {
                     <h2>Evolutivo de gastos</h2>
                   </div>
                   {evolutivo.length === 0 ? (
-                    <div className="empty-hint">Cargando...</div>
+                    <Skeleton />
                   ) : (
                     <>
                       <div className="chart-box"><canvas ref={gastosCanvasRef}></canvas></div>
@@ -1739,7 +1839,7 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              {ahorroStatus && <div className="status">{ahorroStatus}</div>}
+              {ahorroStatus && <StatusMsg texto={ahorroStatus} />}
             </section>
           </div>
         )}
@@ -1818,7 +1918,7 @@ export default function Home() {
               <section className="card"><div className="empty-hint">No hay cuotas activas en ese mes.</div></section>
             )}
 
-            {cuotasMesTarjetas.length > 0 && <div className="subsection-title" style={{ margin: "4px 0 0" }}>💳 Tarjetas</div>}
+            {cuotasMesTarjetas.length > 0 && <div className="subsection-title" style={{ margin: "4px 0 0" }}><Icon name="card" size={16} /> Tarjetas</div>}
             {cuotasMesTarjetas.map((g) => (
               <section className="card" key={g.nombre}>
                 <div className="card-head-row">
@@ -1846,7 +1946,7 @@ export default function Home() {
               </section>
             ))}
 
-            {cuotasMesBanco.length > 0 && <div className="subsection-title">🏦 El Banco (préstamos y transferencias)</div>}
+            {cuotasMesBanco.length > 0 && <div className="subsection-title"><Icon name="bank" size={16} /> El Banco (préstamos y transferencias)</div>}
             {cuotasMesBanco.map((g) => (
               <section className="card" key={g.nombre}>
                 <div className="card-head-row">
@@ -1904,7 +2004,7 @@ export default function Home() {
                   </div>
                 );
               })}
-              {cierreStatus && <div className="status">{cierreStatus}</div>}
+              {cierreStatus && <StatusMsg texto={cierreStatus} />}
             </section>
 
             <div className="bankcards-row">
@@ -1942,9 +2042,9 @@ export default function Home() {
                   </div>
 
                   <div className="month-nav" style={{ marginBottom: 14 }}>
-                    <button className="btn-icon" onClick={() => irMesTarjeta(-1)}>‹</button>
+                    <button className="btn-icon" aria-label="Mes anterior" onClick={() => irMesTarjeta(-1)}>‹</button>
                     <span className="month-nav-label">{MESES_NOMBRE[tarjetaMesFiltro.month]} {tarjetaMesFiltro.year}</span>
-                    <button className="btn-icon" onClick={() => irMesTarjeta(1)}>›</button>
+                    <button className="btn-icon" aria-label="Mes siguiente" onClick={() => irMesTarjeta(1)}>›</button>
                     {!tarjetaEnMesActual && <button className="btn-ghost" onClick={irMesActualTarjeta}>Mes actual</button>}
                   </div>
 
@@ -1958,7 +2058,7 @@ export default function Home() {
                   />
 
                   {tarjetaMesCuotas === null ? (
-                    <div className="empty-hint">Cargando...</div>
+                    <Skeleton />
                   ) : tarjetaItemsVista.length === 0 ? (
                     <div className="empty-hint">
                       {tarjetaSubtab === "consumos" ? "Esta tarjeta no tiene consumos en ese mes." : "Esta tarjeta no tiene gastos fijos."}
@@ -2047,7 +2147,15 @@ export default function Home() {
           const equiv = (n) => (usd && dolarBlue ? ` (≈ ${fmt(n * dolarBlue)} al dólar blue)` : "");
           const [fy, fm, fd] = String(gForm.fecha || "").split("-");
           const mesFecha = fm ? `${MESES_NOMBRE[Number(fm) - 1]} ${fy}` : "";
-          const set = (patch) => setGForm({ ...gForm, ...patch });
+          const set = (patch) => {
+            setGForm({ ...gForm, ...patch });
+            // al corregir un campo, se le saca el error
+            setErroresForm((er) => {
+              const nuevo = { ...er };
+              Object.keys(patch).forEach((k) => { delete nuevo[k]; });
+              return nuevo;
+            });
+          };
 
           const extras = (opciones.categorias || []).filter((c) => !CATEGORIAS_GASTO.includes(c) && !CATEGORIAS_INGRESO.includes(c) && !CATEGORIAS_VIEJAS.includes(c));
           const categoriasDisponibles = esIngreso ? CATEGORIAS_INGRESO : [...CATEGORIAS_GASTO, ...extras];
@@ -2104,11 +2212,11 @@ export default function Home() {
           const claseInfo = (g) => ({ "Gasto fijo": ["Fijo", "badge-neutral"], "Gasto variable": ["Compra", "badge-info"], "Ingreso extra": ["Ingreso", "badge-ok"] }[g] || [g, "badge-neutral"]);
 
           return (
-            <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setCargarAbierto(false); }}>
+            <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) cerrarCargar(); }}>
               <div className="modal" role="dialog" aria-modal="true" aria-label="Cargar a la planilla">
                 <div className="modal-head">
                   <h2>Cargar</h2>
-                  <button className="btn-icon" aria-label="Cerrar" onClick={() => setCargarAbierto(false)}>✕</button>
+                  <button className="btn-icon" aria-label="Cerrar" onClick={cerrarCargar}><Icon name="x" size={18} /></button>
                 </div>
 
                 <Segmented
@@ -2118,12 +2226,14 @@ export default function Home() {
                 />
 
                 <label>Descripción</label>
-                <input autoFocus placeholder={esIngreso ? "Ej: Venta, Reintegro..." : "Ej: Zapatillas, Netflix, Nafta..."} value={gForm.desc} onChange={(e) => set({ desc: e.target.value })} />
+                <input id="cargar-desc" autoFocus aria-invalid={!!erroresForm.desc} aria-describedby={erroresForm.desc ? "err-desc" : undefined} placeholder={esIngreso ? "Ej: Venta, Reintegro..." : "Ej: Zapatillas, Netflix, Nafta..."} value={gForm.desc} onChange={(e) => set({ desc: e.target.value })} />
+                {erroresForm.desc && <p className="field-error" id="err-desc">{erroresForm.desc}</p>}
 
                 <div className="form-grid">
                   <div>
                     <label>{esCompra && cuotasN > 1 ? "Monto de cada cuota" : "Monto"}</label>
-                    <input type="number" min="0" placeholder="0" value={gForm.monto} onChange={(e) => set({ monto: e.target.value })} />
+                    <input id="cargar-monto" type="number" inputMode="decimal" min="0" placeholder="0" aria-invalid={!!erroresForm.monto} aria-describedby={erroresForm.monto ? "err-monto" : undefined} value={gForm.monto} onChange={(e) => set({ monto: e.target.value })} />
+                    {erroresForm.monto && <p className="field-error" id="err-monto">{erroresForm.monto}</p>}
                   </div>
                   <div>
                     <label>Moneda</label>
@@ -2132,11 +2242,12 @@ export default function Home() {
                 </div>
 
                 <label>Categoría</label>
-                <div className="chips">
+                <div className="chips" id="cargar-categoria" tabIndex={-1} role="group" aria-label="Categoría">
                   {categoriasDisponibles.map((c) => (
-                    <button key={c} type="button" className={`chip ${gForm.categoria === c ? "active" : ""}`} onClick={() => set({ categoria: c })}>{c}</button>
+                    <button key={c} type="button" aria-pressed={gForm.categoria === c} className={`chip ${gForm.categoria === c ? "active" : ""}`} onClick={() => set({ categoria: c })}>{c}</button>
                   ))}
                 </div>
+                {erroresForm.categoria && <p className="field-error" role="alert">{erroresForm.categoria}</p>}
 
                 <div className="form-grid">
                   <div>
@@ -2193,7 +2304,7 @@ export default function Home() {
                   </>
                 )}
 
-                <div className={`impacto-box ${completo ? "ok" : ""}`}>
+                <div className={`impacto-box ${completo ? "ok" : ""}`} aria-live="polite">
                   {completo ? (
                     <>
                       <div className="resumen-label">{esCompra && esTarjeta ? "Se paga con el sueldo de" : "Impacta en"}</div>
@@ -2209,7 +2320,7 @@ export default function Home() {
                 </div>
 
                 <button className="btn-primary btn-big" onClick={agregar}>Guardar en la planilla</button>
-                {addStatus && <div className="status">{addStatus}</div>}
+                {addStatus && <StatusMsg texto={addStatus} />}
 
                 <details className="cierre-details">
                   <summary>Gastos fijos cargados · {gastosFijos.length} · {fmt(gastosFijos.reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0))} por mes</summary>
