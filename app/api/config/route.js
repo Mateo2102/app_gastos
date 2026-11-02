@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { guardarPiso, guardarCierreDia } from '@/lib/logic';
 import { getDashboardData } from '@/lib/dashboard';
+import { protegido } from '@/lib/guardia';
 
-export async function POST(req) {
+export const POST = protegido(async function POST(req) {
   try {
     const body = await req.json();
     if (body.cierre) await guardarCierreDia(body.cierre.banco, body.cierre.dia);
@@ -13,4 +14,4 @@ export async function POST(req) {
     console.error(e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
-}
+});

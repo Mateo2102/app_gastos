@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getOpciones } from '@/lib/data';
+import { protegido } from '@/lib/guardia';
 
-export async function GET() {
+export const GET = protegido(async function GET() {
   try {
     const data = await getOpciones();
     return NextResponse.json(data);
@@ -9,4 +10,4 @@ export async function GET() {
     console.error(e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
-}
+});

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { agregarAhorroMov } from '@/lib/logic';
 import { getDashboardData } from '@/lib/dashboard';
+import { protegido } from '@/lib/guardia';
 
-export async function POST(req) {
+export const POST = protegido(async function POST(req) {
   try {
     const body = await req.json();
     await agregarAhorroMov({ fecha: body.fecha, monto: body.monto, moneda: body.moneda });
@@ -12,4 +13,4 @@ export async function POST(req) {
     console.error(e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
-}
+});

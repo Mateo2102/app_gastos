@@ -1130,3 +1130,29 @@ button:active:not(:disabled) {
 .tipo-gasto .seg.active { background: var(--danger); color: #fff; }
 .tipo-ingreso .seg.active { background: var(--green); color: #fff; }
 .impacto-box.ok.ingreso { border-color: var(--green); background: var(--green-soft); }
+
+/* ---------- Acceso privado ---------- */
+
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.login-card {
+  width: 100%; max-width: 380px; text-align: center;
+  background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 32px 28px;
+}
+.login-card .brand-icon { margin: 0 auto 14px; }
+.login-card h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: -0.02em; }
+.login-sub { margin: 0 0 20px; color: var(--text-muted); font-size: 14px; }
+.login-error { margin: 0 0 16px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--danger-soft); color: var(--danger); font-size: 13.5px; font-weight: 600; text-align: left; }
+.login-btn {
+  display: block; padding: 13px 16px; border-radius: 999px;
+  background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 14.5px; text-decoration: none;
+}
+.login-btn:hover { background: var(--accent-hover); }
+.sidebar-foot { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.btn-salir {
+  display: inline-flex; align-items: center; gap: 8px; width: auto; margin: 0; padding: 8px 12px;
+  background: transparent; color: var(--text-muted); border-radius: 10px; font-size: 13.5px; font-weight: 600;
+}
+.btn-salir:hover { background: var(--surface-alt); color: var(--text); }
+.btn-salir .icon { margin: 0; }
+.mobilebar { gap: 8px; }

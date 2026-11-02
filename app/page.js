@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
-import { mesPagoCredito, mesCierreDesdeFechaCierre, shiftMonthKey, fechaCierreDia, fechaAplicacion } from "@/lib/closing";
+import { fechaCierreDia, fechaAplicacion, describirPago } from "@/lib/closing";
 
 const MESES_NOMBRE = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -138,6 +138,11 @@ function agruparPor(lista, keyFn) {
 
 async function fetchJSON(url, opts) {
   const resp = await fetch(url, opts);
+  if (resp.status === 401) {
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- recarga completa a propósito: descarta los datos en memoria
+    window.location.href = "/login";
+    throw new Error("Tu sesión venció. Volvé a iniciar sesión.");
+  }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.error || `Error ${resp.status}`);
@@ -174,6 +179,7 @@ const ICONOS = {
   card: <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></>,
   bank: <path d="M3 21h18M5 21V10M9 21V10M15 21V10M19 21V10M3 10l9-6 9 6" />,
   home: <path d="M3 11 12 3l9 8M5 10v10h14V10M10 20v-6h4v6" />,
+  logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>,
   receipt: <path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6" />,
   chart: <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />,
   wallet: <><path d="M4 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11" /><circle cx="16" cy="13.5" r="1" /></>,
@@ -412,6 +418,13 @@ export default function Home() {
   // La pestaña "Gastos" se carga recién al abrirla, para no gastar lecturas de Sheets de más.
   function abrirTab(id) {
     setTab(id);
+  }
+
+  async function salir() {
+    try { await fetch("/api/auth/salir", { method: "POST" }); } finally {
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- recarga completa a propósito: descarta los datos en memoria
+      window.location.href = "/login";
+    }
   }
 
   function abrirCargar(clase) {
@@ -669,9 +682,9 @@ export default function Home() {
     }
   }
 
-  async function eliminarFijo(row) {
+  async function eliminarFijo(g) {
     if (!confirm("¿Eliminar este gasto fijo de la planilla?")) return;
-    const res = await fetchJSON(`/api/gastos/${row}`, { method: "DELETE" });
+    const res = await fetchJSON(`/api/gastos/${encodeURIComponent(g.ref)}?fila=${g.row}`, { method: "DELETE" });
     render(res.dashboard);
     setGastosFijos(res.gastosFijos);
     buscarHistorico();
@@ -1125,7 +1138,7 @@ export default function Home() {
                   <td>{g.tipo}</td>
                   <td>{g.medio}</td>
                   <td className="num">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</td>
-                  <td className="col-action"><button className="btn-danger-ghost" onClick={() => eliminarFijo(g.row)}>Eliminar</button></td>
+                  <td className="col-action"><button className="btn-danger-ghost" onClick={() => eliminarFijo(g)}>Eliminar</button></td>
                 </tr>
               ))}
             </tbody>
@@ -1170,6 +1183,7 @@ export default function Home() {
           <span className="dolar-chip">
             {dolarBlue ? <>Dólar blue <b>{fmt(dolarBlue)}</b></> : "Dólar blue no disponible"}
           </span>
+          <button className="btn-salir" onClick={salir}><Icon name="logout" size={16} /> Salir</button>
         </div>
       </aside>
 
@@ -1182,6 +1196,7 @@ export default function Home() {
           <span className="dolar-chip">
             {dolarBlue ? <>Dólar blue <b>{fmt(dolarBlue)}</b></> : "Dólar blue no disponible"}
           </span>
+          <button className="btn-icon" aria-label="Salir" onClick={salir}><Icon name="logout" size={18} /></button>
         </header>
 
       <main className="content" id="contenido" tabIndex={-1}>
@@ -2316,18 +2331,22 @@ export default function Home() {
           const extras = (opciones.categorias || []).filter((c) => !CATEGORIAS_GASTO.includes(c) && !CATEGORIAS_INGRESO.includes(c) && !CATEGORIAS_VIEJAS.includes(c));
           const categoriasDisponibles = esIngreso ? CATEGORIAS_INGRESO : [...CATEGORIAS_GASTO, ...extras];
 
-          // Mes en que se paga una compra con tarjeta: cierre indicado a mano o día de cierre de la tarjeta.
-          let mesPagoKey = null;
-          if (esCompra && esTarjeta && fm && fd) {
-            const compra = new Date(Number(fy), Number(fm) - 1, Number(fd));
-            if (gForm.fechaCierre) {
-              // Cierre a mano: si la compra es del día del cierre o posterior, ya cerró (se paga un mes más tarde).
-              const [cy, cm, cd] = gForm.fechaCierre.split("-").map(Number);
-              mesPagoKey = shiftMonthKey(mesCierreDesdeFechaCierre(compra, new Date(cy, cm - 1, cd)), 1);
-            } else if (cierreDias[gForm.banco]) {
-              mesPagoKey = mesPagoCredito(compra, cierreDias[gForm.banco]);
-            }
+          // En qué meses se paga la compra: se calcula con describirPago, la MISMA regla que usa la
+          // proyección, así que el texto no puede decir otra cosa que lo que después se ve en los números.
+          const compraD = (fm && fd) ? new Date(Number(fy), Number(fm) - 1, Number(fd)) : null;
+          let cierreManual = null;
+          if (esTarjeta && esCompra && gForm.fechaCierre) {
+            const [cy, cm, cd] = gForm.fechaCierre.split("-").map(Number);
+            cierreManual = new Date(cy, cm - 1, cd);
           }
+          const nJueves = (opciones.cierreN || {})[gForm.banco] || 0;
+          const pago = esCompra && compraD
+            ? describirPago({
+              formaPago: gForm.formaPago, fecha: compraD, cuotas: cuotasN, fechaCierre: cierreManual,
+              cierreDia: cierreDias[gForm.banco] || null, n: nJueves
+            })
+            : null;
+          const mesesPago = pago ? pago.meses : [];
 
           const faltan = [];
           if (!String(gForm.desc).trim()) faltan.push("la descripción");
@@ -2335,42 +2354,47 @@ export default function Home() {
           if (!esIngreso && !gForm.categoria) faltan.push("la categoría");
           if (!fm) faltan.push("la fecha");
           if (!esIngreso && gForm.formaPago !== "Efectivo" && !gForm.banco) faltan.push(esTarjeta ? "la tarjeta (banco)" : "el banco");
-          if (esCompra && esTarjeta && gForm.banco && !mesPagoKey && fm) faltan.push(`el día de cierre de ${gForm.banco} (se carga en Tarjetas)`);
           const completo = faltan.length === 0;
+
+          const fechaTxt = (x) => `${String(x.getDate()).padStart(2, "0")}/${String(x.getMonth() + 1).padStart(2, "0")}`;
+          const nombreJueves = ["", "primer", "segundo", "tercer", "cuarto"][nJueves] || "";
+          const notaDePago = () => {
+            if (!pago) return "";
+            if (pago.regla === "cierre-dia") {
+              const dia = cierreDias[gForm.banco];
+              const aplica = fechaAplicacion(compraD, dia);
+              return aplica.getTime() === compraD.getTime()
+                ? `${gForm.banco} cierra el día ${dia}: la compra todavía entra en este cierre.`
+                : `${gForm.banco} cerró el día ${dia}: la compra queda con fecha ${fechaTxt(compraD)}, pero se aplica el ${fechaTxt(aplica)} (entra en el cierre siguiente).`;
+            }
+            if (pago.regla === "cierre-manual") return `Con la fecha de cierre que indicaste (${fechaTxt(cierreManual)}).`;
+            if (pago.regla === "cierre-jueves") return `${gForm.banco} no tiene día de cierre configurado: se usa la regla de la planilla (cierra el ${nombreJueves} jueves).`;
+            return esTarjeta
+              ? `${gForm.banco || "La tarjeta"} no tiene regla de cierre: la compra cuenta en el mes de la compra (regla provisoria).`
+              : "Sin cierre de tarjeta: la compra cuenta en el mes de la compra.";
+          };
 
           let impacto = null;
           if (completo) {
             const medioTxt = esIngreso ? "" : (esTarjeta ? [gForm.marca, gForm.banco].filter(Boolean).join(" ") : (gForm.formaPago === "Efectivo" ? "Efectivo" : (gForm.banco || gForm.formaPago)));
-            if (esCompra && esTarjeta) {
-              const ultimo = shiftMonthKey(mesPagoKey, cuotasN - 1);
-              // Con día de cierre configurado: la compra se calcula con una fecha de aplicación (solo para el cálculo).
-              let nota = "";
-              if (!gForm.fechaCierre && cierreDias[gForm.banco]) {
-                const compraD = new Date(Number(fy), Number(fm) - 1, Number(fd));
-                const aplica = fechaAplicacion(compraD, cierreDias[gForm.banco]);
-                const fechaTxt = (x) => `${String(x.getDate()).padStart(2, "0")}/${String(x.getMonth() + 1).padStart(2, "0")}`;
-                nota = aplica.getTime() === compraD.getTime()
-                  ? `${gForm.banco} cierra el día ${cierreDias[gForm.banco]}: la compra todavía entra en este cierre.`
-                  : `${gForm.banco} cerró el día ${cierreDias[gForm.banco]}: la compra queda con fecha ${fechaTxt(compraD)}, pero se aplica el ${fechaTxt(aplica)} (entra en el cierre siguiente).`;
-              }
+            if (esCompra && mesesPago.length) {
+              const primero = labelTramo(mesesPago[0]);
+              const ultimo = labelTramo(mesesPago[mesesPago.length - 1]);
               impacto = {
-                nota,
-                titulo: cuotasN > 1 ? `${labelTramo(mesPagoKey)} → ${labelTramo(ultimo)}` : labelTramo(mesPagoKey),
+                nota: notaDePago(),
+                titulo: mesesPago.length > 1 ? `${primero} → ${ultimo}` : primero,
                 detalle: cuotasN > 1
-                  ? `${cuotasN} cuotas de ${fmtM(montoN)} con ${medioTxt}, una por mes con el sueldo de cada mes. Total ${fmtM(montoN * cuotasN)}${equiv(montoN * cuotasN)}.`
-                  : `Un solo pago de ${fmtM(montoN)}${equiv(montoN)} con ${medioTxt}.`
-              };
-            } else if (esCompra) {
-              const ultimo = shiftMonthKey(`${fy}-${Number(fm) - 1}`, cuotasN - 1);
-              impacto = {
-                titulo: cuotasN > 1 ? `${mesFecha} → ${labelTramo(ultimo)}` : mesFecha,
-                detalle: cuotasN > 1
-                  ? `${cuotasN} cuotas de ${fmtM(montoN)} (${medioTxt}). Total ${fmtM(montoN * cuotasN)}${equiv(montoN * cuotasN)}.`
-                  : `${fmtM(montoN)}${equiv(montoN)} (${medioTxt}), en el mes de la compra.`
+                  ? `${cuotasN} cuotas de ${fmtM(montoN)} (${medioTxt}), una por mes. Total ${fmtM(montoN * cuotasN)}${equiv(montoN * cuotasN)}.`
+                  : `Un solo pago de ${fmtM(montoN)}${equiv(montoN)} (${medioTxt}).`
               };
             } else if (esFijo) {
-              impacto = { titulo: `Todos los meses desde ${mesFecha}`, detalle: `Se suman ${fmtM(montoN)}${equiv(montoN)} a tus gastos cada mes (${medioTxt}).` };
-            } else {
+              // Hoy la app no guarda inicio ni fin de un gasto fijo: la proyección lo suma a TODOS los meses.
+              impacto = {
+                titulo: "Todos los meses",
+                detalle: `Se suman ${fmtM(montoN)}${equiv(montoN)} a tus gastos en cada mes de la proyección (${medioTxt}).`,
+                nota: "Los gastos fijos todavía no tienen fecha de inicio ni de fin."
+              };
+            } else if (esIngreso) {
               impacto = { titulo: mesFecha, detalle: `Se suman ${fmtM(montoN)}${equiv(montoN)} a tus ingresos de ese mes.` };
             }
           }
@@ -2473,9 +2497,9 @@ export default function Home() {
                 )}
 
                 <div className={`impacto-box ${completo ? "ok" : ""} ${esIngreso ? "ingreso" : ""}`} aria-live="polite">
-                  {completo ? (
+                  {completo && impacto ? (
                     <>
-                      <div className="resumen-label">{esCompra && esTarjeta ? "Se paga con el sueldo de" : "Impacta en"}</div>
+                      <div className="resumen-label">{pago && pago.regla !== "mes-de-compra" ? "Se paga con el sueldo de" : "Impacta en"}</div>
                       <div className="impacto-titulo">{impacto.titulo}</div>
                       <div className="resumen-text">{impacto.detalle}</div>
                       {impacto.nota && <p className="impacto-nota">{impacto.nota}</p>}

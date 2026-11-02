@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { eliminarAhorroMov } from '@/lib/logic';
 import { getDashboardData } from '@/lib/dashboard';
+import { protegido } from '@/lib/guardia';
 
-export async function DELETE(req, { params }) {
+export const DELETE = protegido(async function DELETE(req, { params }) {
   try {
     const { key } = await params;
     await eliminarAhorroMov(decodeURIComponent(key));
@@ -12,4 +13,4 @@ export async function DELETE(req, { params }) {
     console.error(e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
-}
+});

@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server';
 import { agregarGasto, getGastosFijos } from '@/lib/data';
 import { getDolarBlue } from '@/lib/logic';
 import { getDashboardData } from '@/lib/dashboard';
+import { statusDe } from '@/lib/errores';
+import { protegido } from '@/lib/guardia';
 
-export async function POST(req) {
+export const POST = protegido(async function POST(req) {
   try {
     const body = await req.json();
     await agregarGasto(body);
@@ -12,6 +14,6 @@ export async function POST(req) {
     return NextResponse.json({ dashboard, gastosFijos });
   } catch (e) {
     console.error(e);
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: e.message }, { status: statusDe(e) });
   }
-}
+});

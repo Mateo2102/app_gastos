@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getHistorico } from '@/lib/data';
 import { getDolarBlue } from '@/lib/logic';
+import { protegido } from '@/lib/guardia';
 
-export async function GET(req) {
+export const GET = protegido(async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
     const desde = searchParams.get('desde') || '';
@@ -14,4 +15,4 @@ export async function GET(req) {
     console.error(e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
-}
+});
