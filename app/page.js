@@ -1444,8 +1444,8 @@ export default function Home() {
                                 {capacidad.enDeficit ? (
                                   <p className="cobro-deficit">
                                     {capacidad.modo === "saldo"
-                                      ? `Con lo que tenés no alcanza para lo que falta pagar y el piso de ${fmt(capacidad.piso)}: faltan ${fmt(-capacidad.libre)}.`
-                                      : `Con lo comprometido para ${labelTramo(capacidad.mesKey)} no llegás a cubrir el piso de ${fmt(capacidad.piso)}: faltan ${fmt(-capacidad.libre)}.`}
+                                      ? `Lo que tenés no alcanza para lo que te falta pagar: faltan ${fmt(-capacidad.libre)}.`
+                                      : `Los ingresos de ${labelTramo(capacidad.mesKey)} no alcanzan para lo comprometido: faltan ${fmt(-capacidad.libre)}.`}
                                   </p>
                                 ) : (
                                   <div className="cobro-valor">{fmt(capacidad.porDia)}<small> por día hasta el {fechaCortaISO(capacidad.hasta)}</small></div>
@@ -1455,17 +1455,15 @@ export default function Home() {
                                     <>
                                       <span>Tenés <strong>{fmt(capacidad.saldo.monto)}</strong></span>
                                       <span>− Te falta pagar <strong>{fmt(capacidad.pendiente)}</strong>{capacidad.pagado > 0 ? ` (ya pagaste ${fmt(capacidad.pagado)})` : ""}</span>
-                                      <span>− Piso <strong>{fmt(capacidad.piso)}</strong></span>
                                       {capacidad.ahorrado > 0 && <span>− Ahorrado después de calcular esto <strong>{fmt(capacidad.ahorrado)}</strong></span>}
-                                      <span>= Libre <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
+                                      <span>= Podés gastar <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
                                     </>
                                   ) : (
                                     <>
                                       <span>Ingresos de {labelTramo(capacidad.mesKey)} <strong>{fmt(capacidad.ingresos)}</strong></span>
                                       <span>− Comprometido <strong>{fmt(capacidad.comprometido)}</strong></span>
-                                      <span>− Piso <strong>{fmt(capacidad.piso)}</strong></span>
                                       {capacidad.ahorrado > 0 && <span>− Ahorrado desde el último cobro <strong>{fmt(capacidad.ahorrado)}</strong></span>}
-                                      <span>= Libre <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
+                                      <span>= Podés gastar <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
                                     </>
                                   )}
                                 </div>
