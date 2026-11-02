@@ -606,14 +606,20 @@ export default function Home() {
   async function cargarInicial() {
     setLoadError("");
     setCargandoInicial(true);
-    const resultados = await Promise.allSettled([
+    // Primero UNA consulta sola: lee la planilla y deja la caché del servidor lista. Si salieran todas
+    // juntas, en Vercel cada una caería en una instancia distinta y leería Sheets por su cuenta
+    // (límite: 60 lecturas por minuto). Después, el resto en paralelo aprovecha esa caché.
+    const primera = await Promise.allSettled([
+      cargarTablero() // fija mesesBase (siempre relativo a hoy, para el header y por-cuenta)
+    ]);
+    const resto = await Promise.allSettled([
       cargarOpciones(),
-      cargarTablero(), // fija mesesBase (siempre relativo a hoy, para el header y por-cuenta)
       verPeriodo(mesObjetivo.month, mesObjetivo.year), // la tabla/gráfico arrancan en el mes de referencia
       cargarGastosFijos(),
       buscarHistorico("", ""),
       cargarTarjetaMes()
     ]);
+    const resultados = [...primera, ...resto];
     const fallo = resultados.find((r) => r.status === "rejected");
     if (fallo) setLoadError(mensajeDeError(fallo.reason));
     setCargandoInicial(false);
