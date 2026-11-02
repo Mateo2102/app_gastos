@@ -283,11 +283,51 @@ function calcAlertas(meses) {
 
 const fmtCorto = (n) => "$" + (Math.abs(n) >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.round(n / 1000) + "k");
 
+// Línea de lo REAL (sólida) y de lo PROYECTADO (punteada, más fina, sin puntos): mismo color = misma cosa.
+const lineaReal = (label, data, color) => ({
+  type: "line", label, data, borderColor: color, backgroundColor: color, borderWidth: 3,
+  pointRadius: 3, pointHoverRadius: 5, tension: 0.2
+});
+const lineaProy = (label, data, color) => ({
+  type: "line", label, data, borderColor: color, backgroundColor: color, borderWidth: 2,
+  borderDash: [2, 5], borderCapStyle: "round", pointRadius: 0, pointHoverRadius: 4, tension: 0.2
+});
+
+// Marca vertical del mes en curso ("hoy") en los gráficos mensuales.
+const pluginHoy = {
+  id: "lineaHoy",
+  afterDatasetsDraw(chart, _args, opts) {
+    if (!opts || opts.index === undefined || opts.index < 0) return;
+    const { ctx, chartArea, scales } = chart;
+    const x = scales.x.getPixelForValue(opts.index);
+    if (!Number.isFinite(x)) return;
+    ctx.save();
+    ctx.strokeStyle = PAL.texto;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, chartArea.top);
+    ctx.lineTo(x, chartArea.bottom);
+    ctx.stroke();
+    ctx.fillStyle = PAL.texto;
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("hoy", x, chartArea.top - 4);
+    ctx.restore();
+  }
+};
+
+// "▲ +3,2%" / "▼ −1,5%" / "= 0%" para una variación (0,032 = 3,2%).
+const textoVariacion = (v) => {
+  const n = Math.abs(Math.round(v * 1000) / 10);
+  return `${n === 0 ? "= " : (v > 0 ? "▲ +" : "▼ −")}${String(n).replace(".", ",")}%`;
+};
+
 // Opciones comunes de los gráficos de la sección Gráficos: una sola escala, leyenda arriba, grilla de línea fina.
 function opcionesChart(formato = fmtCorto) {
   return {
     responsive: true,
     maintainAspectRatio: false,
+    layout: { padding: { top: 14 } },
     interaction: { mode: "index", intersect: false },
     plugins: {
       legend: { position: "top", labels: { usePointStyle: true, padding: 16, boxHeight: 8 } },
@@ -331,6 +371,8 @@ export default function Home() {
   const [cobroAbierto, setCobroAbierto] = useState(false);
   const [graficos, setGraficos] = useState(null); // evolutivo contra proyectado (se pide al abrir Gráficos)
   const [graficosVista, setGraficosVista] = useState("ahorro");
+  const [sueldoAgrupar, setSueldoAgrupar] = useState("mes"); // mes | trimestre | anio
+  const [sueldoAnio, setSueldoAnio] = useState("todos");
   const [saldoMonto, setSaldoMonto] = useState(""); // lo que tengo hoy
   const [saldoPagados, setSaldoPagados] = useState([]); // ids de lo comprometido que ya pagué (tildes)
   const [saldoAhorrado, setSaldoAhorrado] = useState(""); // lo ahorrado desde el último cobro
@@ -406,6 +448,7 @@ export default function Home() {
   const ahorroUsdRef = useRef(null);
   const ahorroMesRef = useRef(null);
   const sueldoRef = useRef(null);
+  const ingresoRef = useRef(null);
   const ahorroAcumRef = useRef(null);
   const gastoIngRef = useRef(null);
   const gastosCanvasRef = useRef(null);
@@ -576,10 +619,10 @@ export default function Home() {
       data: {
         labels: meses.map((m) => m.label),
         datasets: [
-          { type: "bar", label: "Ingresos", data: meses.map((m) => m.ingresos), backgroundColor: PAL.ingreso, borderRadius: 6, barPercentage: 0.7 },
-          { type: "bar", label: "Gastos", data: meses.map((m) => m.gastos), backgroundColor: PAL.gasto, borderRadius: 6, barPercentage: 0.7 },
-          { type: "line", label: "Ahorro proyectado", data: meses.map((m) => m.ahorroProyectado), borderColor: PAL.ahorro, backgroundColor: PAL.ahorro, tension: 0.3, borderWidth: 3, pointRadius: 4 },
-          { type: "line", label: "Piso configurado", data: meses.map((m) => m.pisoConfigurado), borderColor: PAL.piso, borderDash: [6, 4], borderWidth: 2, pointRadius: 0 }
+          lineaReal("Ingresos", meses.map((m) => m.ingresos), PAL.ingresoLinea),
+          lineaReal("Gastos", meses.map((m) => m.gastos), PAL.gasto),
+          lineaReal("Ahorro proyectado", meses.map((m) => m.ahorroProyectado), PAL.ahorro),
+          lineaProy("Piso configurado", meses.map((m) => m.pisoConfigurado), PAL.piso)
         ]
       },
       options: {
@@ -1169,13 +1212,12 @@ export default function Home() {
     if (!gastosKpis || !gastosKpis.serie.length) return;
     const s = gastosKpis.serie;
     gastosDashChart.current = new Chart(gastosDashRef.current.getContext("2d"), {
-      type: "bar",
+      type: "line",
       data: {
         labels: s.map((x) => x.label),
         datasets: [
-          { type: "bar", label: "Gasto del mes", data: s.map((x) => x.total), borderRadius: 6, barPercentage: 0.6,
-            backgroundColor: s.map((_, i) => (i === s.length - 1 ? PAL.gasto : PAL.gastoSuave)) },
-          { type: "line", label: "Promedio", data: s.map(() => gastosKpis.promedio), borderColor: PAL.texto, borderDash: [6, 4], borderWidth: 2, pointRadius: 0 }
+          lineaReal("Gasto del mes", s.map((x) => x.total), PAL.gasto),
+          lineaProy("Promedio", s.map(() => gastosKpis.promedio), PAL.texto)
         ]
       },
       options: {
@@ -1210,7 +1252,7 @@ export default function Home() {
     return { filas, totalARS: accARS, totalUSD: accUSD, equivARS, equivUSD };
   }, [ahorroMovs, dolarBlue]);
 
-  // ---- Sección "Gráficos": ahorro, gastos e ingresos, evolutivo contra proyectado ----
+  // ---- Sección "Gráficos": todo en líneas. Punteada = proyectado, sólida = real, marca vertical = hoy ----
   const graficosSerie = useMemo(() => {
     if (!graficos) return null;
     let accProy = 0, accReal = 0;
@@ -1222,120 +1264,137 @@ export default function Home() {
     const hechos = filas.filter((m) => m.estado !== "futuro");
     const real = hechos.reduce((acc, m) => acc + (m.ahorroReal || 0), 0);
     const plan = hechos.reduce((acc, m) => acc + m.ahorroProyectado, 0);
+    const aprox = filas.filter((m) => m.aprox);
     return {
       filas, real, plan, dif: real - plan,
-      desde: filas[0] ? filas[0].label : "", hasta: hechos.length ? hechos[hechos.length - 1].label : ""
+      desde: filas[0] ? filas[0].label : "", hasta: hechos.length ? hechos[hechos.length - 1].label : "",
+      indiceHoy: filas.findIndex((m) => m.estado === "actual"),
+      aproxHasta: aprox.length ? aprox[aprox.length - 1].label : ""
     };
   }, [graficos]);
 
-  // Evolutivo de lo que realmente se cobró: sueldo normal y extra, por mes de cobro (no depende de la proyección).
+  // Opciones de un gráfico mensual: marca de "hoy" y, al pasar el mouse, qué tan firme es lo proyectado de ese mes.
+  const opcionesMensual = (serie, formato) => {
+    const o = opcionesChart(formato);
+    o.plugins.lineaHoy = { index: serie.indiceHoy };
+    o.plugins.tooltip.callbacks.afterBody = (items) => {
+      const m = items.length ? serie.filas[items[0].dataIndex] : null;
+      if (!m) return "";
+      if (m.aprox) return "Proyectado aproximado: ese mes no tenía foto";
+      return m.fijo ? "Proyectado fijo desde que arrancó el mes" : "Proyección de hoy: cambia con lo que cargues";
+    };
+    return o;
+  };
+
+  useEffect(() => {
+    if (tab !== "graficos" || graficosVista !== "ahorro" || !graficosSerie) return undefined;
+    const f = graficosSerie.filas;
+    const etiquetas = f.map((m) => m.label);
+    const charts = [];
+    const nuevo = (canvas, real, proy) => canvas && charts.push(new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: { labels: etiquetas, datasets: [lineaProy("Proyectado", proy, PAL.ahorro), lineaReal("Real", real, PAL.ahorro)] },
+      options: opcionesMensual(graficosSerie),
+      plugins: [pluginHoy]
+    }));
+    nuevo(ahorroMesRef.current, f.map((m) => m.ahorroReal), f.map((m) => m.ahorroProyectado));
+    nuevo(ahorroAcumRef.current, f.map((m) => m.accReal), f.map((m) => m.accProy));
+    return () => charts.forEach((c) => c.destroy());
+  }, [graficosSerie, tab, graficosVista]);
+
+  useEffect(() => {
+    if (tab !== "graficos" || graficosVista !== "gastos" || !graficosSerie) return undefined;
+    const f = graficosSerie.filas;
+    const etiquetas = f.map((m) => m.label);
+    const charts = [];
+    const nuevo = (canvas, proy, real, color) => canvas && charts.push(new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: { labels: etiquetas, datasets: [lineaProy("Proyectado", proy, color), lineaReal(real.etiqueta, real.datos, color)] },
+      options: opcionesMensual(graficosSerie),
+      plugins: [pluginHoy]
+    }));
+    nuevo(gastoIngRef.current, f.map((m) => m.gastos), { etiqueta: "Real", datos: f.map((m) => m.gastosReal) }, PAL.gasto);
+    nuevo(ingresoRef.current, f.map((m) => m.ingresos), { etiqueta: "Cobrado", datos: f.map((m) => m.ingresosReal) }, PAL.ingresoLinea);
+    return () => charts.forEach((c) => c.destroy());
+  }, [graficosSerie, tab, graficosVista]);
+
+  // Evolutivo de lo que realmente se cobró (solo lo anotado en Sueldos), agrupado por mes, trimestre o año.
   const sueldoSerie = useMemo(() => {
     if (!graficos) return null;
-    const cobrosLista = graficos.cobros || [];
-    if (!cobrosLista.length) return { vacio: true, meses: [] };
-    const porMes = {};
-    cobrosLista.forEach((c) => {
-      const [y, m] = c.fecha.split("-").map(Number);
-      const k = y * 12 + (m - 1);
-      if (!porMes[k]) porMes[k] = { sueldo: 0, extra: 0 };
-      porMes[k][c.tipo] += c.monto;
+    const todos = graficos.cobros || [];
+    if (!todos.length) return { vacio: true, anios: [], periodos: [] };
+    const anios = [...new Set(todos.map((c) => c.fecha.slice(0, 4)))].sort().reverse();
+    const lista = sueldoAnio === "todos" ? todos : todos.filter((c) => c.fecha.startsWith(sueldoAnio));
+    const mes3 = (i) => MESES_NOMBRE[i].slice(0, 3).toLowerCase();
+    const claveDe = (fecha) => {
+      const [y, m] = fecha.split("-").map(Number);
+      if (sueldoAgrupar === "anio") return y;
+      if (sueldoAgrupar === "trimestre") return y * 4 + Math.floor((m - 1) / 3);
+      return y * 12 + (m - 1);
+    };
+    const etiquetaDe = (k) => {
+      if (sueldoAgrupar === "anio") return String(k);
+      if (sueldoAgrupar === "trimestre") return `T${(k % 4) + 1} ${Math.floor(k / 4)}`;
+      return `${mes3(k % 12)} ${Math.floor(k / 12)}`;
+    };
+    const acum = {};
+    lista.forEach((c) => {
+      const k = claveDe(c.fecha);
+      if (!acum[k]) acum[k] = { sueldo: 0, extra: 0, mesesSueldo: new Set() };
+      acum[k][c.tipo] += c.monto;
+      if (c.tipo === "sueldo") acum[k].mesesSueldo.add(c.fecha.slice(0, 7));
     });
-    const claves = Object.keys(porMes).map(Number);
-    const [hy, hm] = String(graficos.hoy).split("-").map(Number);
-    const desde = Math.max(Math.min(...claves), hy * 12 + hm - 23); // como mucho los últimos 24 meses
-    const hasta = Math.max(...claves, hy * 12 + hm);
-    const meses = [];
-    for (let k = desde; k <= hasta; k++) {
-      const v = porMes[k] || { sueldo: 0, extra: 0 };
-      meses.push({ key: k, label: `${MESES_NOMBRE[k % 12].slice(0, 3).toLowerCase()} ${Math.floor(k / 12)}`, sueldo: v.sueldo, extra: v.extra });
+    const claves = Object.keys(acum).map(Number);
+    const periodos = [];
+    for (let k = Math.min(...claves); k <= Math.max(...claves); k++) {
+      const v = acum[k] || { sueldo: 0, extra: 0, mesesSueldo: new Set() };
+      const meses = v.mesesSueldo.size;
+      // "sueldo" es el promedio por mes cobrado del período: así un trimestre o año incompleto se compara parejo
+      // (sumar todo haría parecer una caída que no existe). "total" es lo cobrado en el período.
+      periodos.push({ k, label: etiquetaDe(k), total: v.sueldo, meses, sueldo: meses ? v.sueldo / meses : 0, extra: v.extra });
     }
-    const conSueldo = meses.filter((m) => m.sueldo > 0);
+    // Variación contra el período anterior que tuvo ese mismo tipo de cobro (un período sin cobro no cuenta como -100%).
+    let anteriorSueldo = null, anteriorExtra = null;
+    periodos.forEach((p) => {
+      p.varSueldo = p.sueldo > 0 && anteriorSueldo ? (p.sueldo - anteriorSueldo) / anteriorSueldo : null;
+      if (p.sueldo > 0) anteriorSueldo = p.sueldo;
+      p.varExtra = p.extra > 0 && anteriorExtra ? (p.extra - anteriorExtra) / anteriorExtra : null;
+      if (p.extra > 0) anteriorExtra = p.extra;
+    });
+    const conSueldo = periodos.filter((p) => p.sueldo > 0);
     const ultimo = conSueldo.length ? conSueldo[conSueldo.length - 1] : null;
-    const anterior = conSueldo.length > 1 ? conSueldo[conSueldo.length - 2] : null;
     const ultimos = conSueldo.slice(-6);
     return {
-      meses, ultimo,
-      variacion: ultimo && anterior ? (ultimo.sueldo - anterior.sueldo) / anterior.sueldo : null,
-      promedio: ultimos.length ? ultimos.reduce((acc, m) => acc + m.sueldo, 0) / ultimos.length : null,
+      periodos, anios, ultimo,
+      promedio: ultimos.length ? ultimos.reduce((acc, p) => acc + p.sueldo, 0) / ultimos.length : null,
       cuantosPromedio: ultimos.length,
-      totalExtra: meses.reduce((acc, m) => acc + m.extra, 0)
+      totalExtra: periodos.reduce((acc, p) => acc + p.extra, 0)
     };
-  }, [graficos]);
+  }, [graficos, sueldoAgrupar, sueldoAnio]);
 
   useEffect(() => {
     if (tab !== "graficos" || graficosVista !== "sueldos" || !sueldoSerie || sueldoSerie.vacio || !sueldoRef.current) return undefined;
+    const ps = sueldoSerie.periodos;
     const opciones = opcionesChart();
-    opciones.scales.x.stacked = true;
-    opciones.scales.y.stacked = true;
-    opciones.plugins.tooltip.callbacks.footer = (items) => {
-      const total = items.reduce((acc, it) => acc + (Number(it.parsed.y) || 0), 0);
-      return items.length > 1 ? `Total cobrado: ${fmt(total)}` : "";
+    const pct = (v) => (v === null ? null : `${v > 0 ? "▲ +" : (v < 0 ? "▼ −" : "= ")}${Math.abs(Math.round(v * 1000) / 10)}%`);
+    opciones.plugins.tooltip.callbacks.afterBody = (items) => {
+      const p = items.length ? ps[items[0].dataIndex] : null;
+      if (!p) return "";
+      return [p.varSueldo !== null ? `Sueldo ${pct(p.varSueldo)} contra el período anterior` : "", p.varExtra !== null ? `Extra ${pct(p.varExtra)} contra el período anterior` : ""].filter(Boolean);
     };
     const chart = new Chart(sueldoRef.current.getContext("2d"), {
-      type: "bar",
+      type: "line",
       data: {
-        labels: sueldoSerie.meses.map((m) => m.label),
+        labels: ps.map((p) => p.label),
         datasets: [
-          { label: "Sueldo", data: sueldoSerie.meses.map((m) => m.sueldo), backgroundColor: PAL.ingresoLinea, borderRadius: 4, maxBarThickness: 28 },
-          { label: "Extra", data: sueldoSerie.meses.map((m) => m.extra), backgroundColor: PAL.cuota, borderRadius: 4, maxBarThickness: 28 }
+          { ...lineaReal(sueldoAgrupar === "mes" ? "Sueldo" : "Sueldo (promedio por mes)", ps.map((p) => (p.sueldo > 0 ? p.sueldo : null)), PAL.ingresoLinea), spanGaps: true },
+          lineaReal("Extra", ps.map((p) => p.extra), PAL.cuota)
         ]
       },
       options: opciones
     });
     return () => chart.destroy();
-  }, [sueldoSerie, tab, graficosVista]);
-
-  useEffect(() => {
-    if (tab !== "graficos" || graficosVista !== "ahorro" || !graficosSerie) return undefined;
-    const f = graficosSerie.filas;
-    const etiquetas = f.map((m) => (m.estado === "actual" ? `${m.label} · hoy` : m.label));
-    const charts = [];
-    if (ahorroMesRef.current) {
-      charts.push(new Chart(ahorroMesRef.current.getContext("2d"), {
-        type: "bar",
-        data: {
-          labels: etiquetas,
-          datasets: [
-            { label: "Proyectado", data: f.map((m) => m.ahorroProyectado), backgroundColor: PAL.libre, borderRadius: 4, maxBarThickness: 18 },
-            { label: "Real", data: f.map((m) => m.ahorroReal), backgroundColor: PAL.ahorro, borderRadius: 4, maxBarThickness: 18 }
-          ]
-        },
-        options: opcionesChart()
-      }));
-    }
-    if (ahorroAcumRef.current) {
-      charts.push(new Chart(ahorroAcumRef.current.getContext("2d"), {
-        type: "line",
-        data: {
-          labels: etiquetas,
-          datasets: [
-            { label: "Proyectado", data: f.map((m) => m.accProy), borderColor: PAL.piso, backgroundColor: PAL.piso, borderWidth: 2, pointRadius: 3, tension: 0.2 },
-            { label: "Real", data: f.map((m) => m.accReal), borderColor: PAL.ahorro, backgroundColor: PAL.ahorro, borderWidth: 3, pointRadius: 4, tension: 0.2 }
-          ]
-        },
-        options: opcionesChart()
-      }));
-    }
-    return () => charts.forEach((c) => c.destroy());
-  }, [graficosSerie, tab, graficosVista]);
-
-  useEffect(() => {
-    if (tab !== "graficos" || graficosVista !== "gastos" || !graficosSerie || !gastoIngRef.current) return undefined;
-    const f = graficosSerie.filas;
-    const chart = new Chart(gastoIngRef.current.getContext("2d"), {
-      type: "bar",
-      data: {
-        labels: f.map((m) => (m.estado === "actual" ? `${m.label} · hoy` : m.label)),
-        datasets: [
-          { type: "bar", label: "Gastos (hasta hoy)", stack: "g", data: f.map((m) => (m.estado === "futuro" ? null : m.gastos)), backgroundColor: PAL.gasto, borderRadius: 4, maxBarThickness: 22 },
-          { type: "bar", label: "Gastos proyectados", stack: "g", data: f.map((m) => (m.estado === "futuro" ? m.gastos : null)), backgroundColor: PAL.gastoSuave, borderRadius: 4, maxBarThickness: 22 },
-          { type: "line", label: "Ingresos", data: f.map((m) => m.ingresos), borderColor: PAL.ingresoLinea, backgroundColor: PAL.ingresoLinea, borderWidth: 2, pointRadius: 3, tension: 0.2 }
-        ]
-      },
-      options: opcionesChart()
-    });
-    return () => chart.destroy();
-  }, [graficosSerie, tab, graficosVista]);
+  }, [sueldoSerie, sueldoAgrupar, tab, graficosVista]);
 
   // Pesos y dólares ahorrados, cada uno en su propio gráfico (nunca dos escalas en un mismo gráfico).
   useEffect(() => {
@@ -2344,6 +2403,14 @@ export default function Home() {
               <section className="card"><Skeleton /></section>
             ) : (
               <>
+                {(graficosVista === "ahorro" || graficosVista === "gastos") && (
+                  <p className="hint leyenda-graf">
+                    <strong>Línea punteada: lo proyectado.</strong> Cuando un mes arranca queda fija, así ves cuánto se desvió; en los meses que vienen cambia con lo que cargues.
+                    {" "}<strong>Línea sólida: lo real.</strong> La marca vertical es hoy.
+                    {graficosSerie.aproxHasta ? ` Hasta ${graficosSerie.aproxHasta} el proyectado es aproximado: la app todavía no guardaba la foto de esos meses.` : ""}
+                  </p>
+                )}
+
                 {graficosVista === "ahorro" && (
                   <>
                     <div className="kpi-3">
@@ -2393,9 +2460,15 @@ export default function Home() {
                 {graficosVista === "gastos" && (
                   <>
                     <section className="card">
-                      <div className="card-head"><h2>Gastos contra ingresos</h2></div>
+                      <div className="card-head"><h2>Gastos: proyectado contra real</h2></div>
                       <div className="chart-box"><canvas ref={gastoIngRef}></canvas></div>
-                      <p className="hint grafico-nota">Lo sólido ya pasó (el mes en curso incluye lo que todavía falta pagar); lo más claro es lo comprometido para los meses que vienen.</p>
+                      <p className="hint grafico-nota">La distancia entre las dos líneas es lo que se gastó de más o de menos contra lo que se esperaba al empezar el mes. El real del mes en curso incluye lo que todavía falta pagar.</p>
+                    </section>
+
+                    <section className="card">
+                      <div className="card-head"><h2>Ingresos: proyectado contra cobrado</h2></div>
+                      <div className="chart-box"><canvas ref={ingresoRef}></canvas></div>
+                      <p className="hint grafico-nota">Lo cobrado es lo que anotaste en Sueldos (sueldo y extra) en cada mes.</p>
                     </section>
 
                     <section className="card">
@@ -2438,32 +2511,64 @@ export default function Home() {
                     </section>
                   ) : (
                     <>
+                      <div className="filtros-fila">
+                        <Segmented value={sueldoAgrupar} onChange={setSueldoAgrupar} options={[{ value: "mes", label: "Por mes" }, { value: "trimestre", label: "Por trimestre" }, { value: "anio", label: "Por año" }]} />
+                        {sueldoSerie.anios.length > 1 && (
+                          <select aria-label="Filtrar por año" value={sueldoAnio} onChange={(e) => setSueldoAnio(e.target.value)}>
+                            <option value="todos">Todos los años</option>
+                            {sueldoSerie.anios.map((a) => <option key={a} value={a}>{a}</option>)}
+                          </select>
+                        )}
+                      </div>
                       <div className="kpi-3">
                         <section className="card">
-                          <div className="stat-tile-label">Último sueldo</div>
+                          <div className="stat-tile-label">{sueldoAgrupar === "mes" ? "Último sueldo" : "Último período (por mes)"}</div>
                           <div className="stat-tile-value">{sueldoSerie.ultimo ? fmt(sueldoSerie.ultimo.sueldo) : "—"}</div>
                           <div className="stat-tile-sub">
                             {sueldoSerie.ultimo ? sueldoSerie.ultimo.label : "sin sueldos anotados"}
-                            {sueldoSerie.variacion === null ? "" : (Math.round(sueldoSerie.variacion * 1000) === 0
-                              ? " · igual que el anterior"
-                              : ` · ${sueldoSerie.variacion > 0 ? "+" : "−"}${Math.abs(Math.round(sueldoSerie.variacion * 1000) / 10)}% contra el anterior`)}
+                            {sueldoSerie.ultimo && sueldoSerie.ultimo.varSueldo !== null ? ` · ${textoVariacion(sueldoSerie.ultimo.varSueldo)} contra el anterior` : ""}
                           </div>
                         </section>
                         <section className="card">
                           <div className="stat-tile-label">Sueldo promedio</div>
                           <div className="stat-tile-value">{sueldoSerie.promedio !== null ? fmt(sueldoSerie.promedio) : "—"}</div>
-                          <div className="stat-tile-sub">de los últimos {sueldoSerie.cuantosPromedio} meses con sueldo</div>
+                          <div className="stat-tile-sub">de los últimos {sueldoSerie.cuantosPromedio} {sueldoAgrupar === "anio" ? "años" : (sueldoAgrupar === "trimestre" ? "trimestres" : "meses")} con sueldo</div>
                         </section>
                         <section className="card">
                           <div className="stat-tile-label">Extras cobrados</div>
                           <div className="stat-tile-value">{fmt(sueldoSerie.totalExtra)}</div>
-                          <div className="stat-tile-sub">en {sueldoSerie.meses.length} {sueldoSerie.meses.length === 1 ? "mes" : "meses"} (no incluye el sueldo normal)</div>
+                          <div className="stat-tile-sub">en el período mostrado (sin el sueldo normal)</div>
                         </section>
                       </div>
                       <section className="card">
                         <div className="card-head"><h2>Evolutivo de lo que cobraste</h2></div>
                         <div className="chart-box"><canvas ref={sueldoRef}></canvas></div>
-                        <p className="hint grafico-nota">Cuenta solo lo que anotaste en Sueldos, por mes de cobro. El sueldo normal y los extras (aguinaldo, turnos, ventas) van en colores distintos.</p>
+                        <p className="hint grafico-nota">
+                          Cuenta solo lo que anotaste en Sueldos. Verde: sueldo normal; azul: extras (aguinaldo, turnos, ventas).
+                          {sueldoAgrupar !== "mes" ? " El sueldo es el promedio por mes cobrado de cada período, así un trimestre o año que todavía no terminó se compara parejo; los extras suman todo lo cobrado." : ""}
+                        </p>
+                      </section>
+                      <section className="card">
+                        <div className="card-head"><h2>Variación contra el período anterior</h2></div>
+                        <div className="table-scroll">
+                          <table>
+                            <thead>
+                              <tr><th>Período</th><th className="num">{sueldoAgrupar === "mes" ? "Sueldo" : "Sueldo por mes"}</th><th className="num">Variación</th>{sueldoAgrupar !== "mes" && <th className="num">Total cobrado</th>}<th className="num">Extra</th><th className="num">Variación</th></tr>
+                            </thead>
+                            <tbody>
+                              {[...sueldoSerie.periodos].reverse().map((p) => (
+                                <tr key={p.k}>
+                                  <td className="strong">{p.label}</td>
+                                  <td className="num">{p.sueldo > 0 ? fmt(p.sueldo) : "—"}</td>
+                                  <td className={`num ${p.varSueldo === null ? "" : (p.varSueldo >= 0 ? "pos" : "neg")}`}>{p.varSueldo === null ? "—" : textoVariacion(p.varSueldo)}</td>
+                                  {sueldoAgrupar !== "mes" && <td className="num">{p.total > 0 ? `${fmt(p.total)} (${p.meses} ${p.meses === 1 ? "mes" : "meses"})` : "—"}</td>}
+                                  <td className="num">{p.extra > 0 ? fmt(p.extra) : "—"}</td>
+                                  <td className={`num ${p.varExtra === null ? "" : (p.varExtra >= 0 ? "pos" : "neg")}`}>{p.varExtra === null ? "—" : textoVariacion(p.varExtra)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </section>
                     </>
                   )
@@ -2481,14 +2586,16 @@ export default function Home() {
                   <div className="table-scroll">
                     <table>
                       <thead>
-                        <tr><th>Mes</th><th className="num">Ingresos</th><th className="num">Gastos</th><th className="num">Ahorro proyectado</th><th className="num">Ahorro real</th></tr>
+                        <tr><th>Mes</th><th className="num">Ingresos proy.</th><th className="num">Cobrado</th><th className="num">Gastos proy.</th><th className="num">Gastos real</th><th className="num">Ahorro proy.</th><th className="num">Ahorro real</th></tr>
                       </thead>
                       <tbody>
                         {graficosSerie.filas.map((m) => (
                           <tr key={m.key}>
-                            <td className="strong">{m.label}{m.estado === "actual" ? " · hoy" : ""}</td>
+                            <td className="strong">{m.label}{m.estado === "actual" ? " · hoy" : ""}{m.aprox ? " *" : ""}</td>
                             <td className="num">{fmt(m.ingresos)}</td>
+                            <td className="num">{m.ingresosReal === null ? "—" : fmt(m.ingresosReal)}</td>
                             <td className="num">{fmt(m.gastos)}</td>
+                            <td className="num">{m.gastosReal === null ? "—" : fmt(m.gastosReal)}</td>
                             <td className="num">{fmt(m.ahorroProyectado)}</td>
                             <td className="num">{m.ahorroReal === null ? "—" : fmt(m.ahorroReal)}</td>
                           </tr>

@@ -1206,3 +1206,9 @@ button:active:not(:disabled) {
 .stat-tile-value.neg { color: var(--danger); }
 .grafico-nota { margin: 10px 0 0; }
 .bottomlink span { font-size: 10px; letter-spacing: -0.02em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.filtros-fila { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.filtros-fila select { width: auto; margin: 0; }
+.leyenda-graf { margin: 0; }
+td.num.pos { color: var(--green); font-weight: 600; }
+td.num.neg { color: var(--danger); font-weight: 600; }
