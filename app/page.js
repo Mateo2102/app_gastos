@@ -89,6 +89,31 @@ function labelTramo(key) {
   return `${MESES_NOMBRE[m]} ${y}`;
 }
 
+// Vigencia de un gasto fijo (fechas ISO "YYYY-MM-DD" que manda la API; los meses cuentan completos).
+const mesDeISO = (iso) => { const [y, m] = String(iso).split("-").map(Number); return y * 12 + (m - 1); };
+function fijoVigenteMes(g, year, month) {
+  const n = year * 12 + month;
+  if (g.desde && n < mesDeISO(g.desde)) return false;
+  if (g.hasta && n > mesDeISO(g.hasta)) return false;
+  if (g.pausaDesde && n >= mesDeISO(g.pausaDesde) && (!g.pausaHasta || n <= mesDeISO(g.pausaHasta))) return false;
+  return true;
+}
+function mesDeFecha(iso) {
+  const [y, m] = String(iso).split("-").map(Number);
+  return `${MESES_NOMBRE[m - 1].slice(0, 3)} ${y}`;
+}
+// Texto corto de la vigencia de un fijo para la lista.
+function vigenciaTexto(g) {
+  const partes = [g.desde ? `desde ${mesDeFecha(g.desde)}` : "desde siempre"];
+  if (g.hasta) partes.push(`hasta ${mesDeFecha(g.hasta)}`);
+  if (g.pausaDesde) partes.push(g.pausaHasta ? `pausado ${mesDeFecha(g.pausaDesde)} a ${mesDeFecha(g.pausaHasta)}` : `pausado desde ${mesDeFecha(g.pausaDesde)}`);
+  return partes.join(" · ");
+}
+const ESTADO_FIJO = {
+  activo: ["Activo", "badge-ok"], pausado: ["Pausado", "badge-neutral"],
+  terminado: ["Terminado", "badge-neutral"], programado: ["Programado", "badge-info"]
+};
+
 function iniciales(nombre) {
   return String(nombre || "?").trim().slice(0, 2).toUpperCase();
 }
@@ -690,6 +715,29 @@ export default function Home() {
     buscarHistorico();
   }
 
+  // Pausar / terminar / reanudar / reactivar un gasto fijo (la API escribe solo su vigencia).
+  async function vigenciaFijo(g, accion) {
+    const aviso = {
+      terminar: `¿Terminar "${g.desc}"? Se sigue contando este mes y deja de contarse desde el mes siguiente.`,
+      pausar: `¿Pausar "${g.desc}"? Deja de contarse desde el mes siguiente hasta que lo reanudes.`
+    }[accion];
+    if (aviso && !confirm(aviso)) return;
+    try {
+      const res = await fetchJSON(`/api/gastos/${encodeURIComponent(g.ref)}?fila=${g.row}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion })
+      });
+      render(res.dashboard);
+      setGastosFijos(res.gastosFijos);
+      buscarHistorico();
+      cargarTarjetaMes();
+      if (gastosHist !== null) cargarGastosMes();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
   function irATarjeta(nombre) {
     setTarjetaActiva(nombre);
     setTarjetasVista("tarjeta");
@@ -743,12 +791,12 @@ export default function Home() {
         cuota: `${c.cuotaNumero} de ${c.cuotasTotales}`
       }));
     gastosFijos
-      .filter((g) => g.formaPago === FORMA_TARJETA)
+      .filter((g) => g.formaPago === FORMA_TARJETA && fijoVigenteMes(g, tarjetaMesFiltro.year, tarjetaMesFiltro.month))
       .forEach((g) => agregar([g.marca, g.banco].filter(Boolean).join(" "), {
         desc: g.desc, moneda: g.moneda, montoARS: g.montoARS, montoUSD: g.montoUSD, cuota: "Fijo"
       }));
     return items;
-  }, [tarjetaMesCuotas, gastosFijos]);
+  }, [tarjetaMesCuotas, gastosFijos, tarjetaMesFiltro]);
 
   const tarjetaMesItems = itemsMesPorTarjeta[grupoActivo?.medio] || [];
   // Los fijos no tienen cuota: se muestran aparte de las cuotas del mes.
@@ -1129,18 +1177,31 @@ export default function Home() {
         ) : (
           <>
             <thead>
-              <tr><th>Descripción</th><th>Tipo</th><th>Medio</th><th className="num">Monto por mes</th><th></th></tr>
+              <tr><th>Descripción</th><th>Tipo</th><th>Medio</th><th>Vigencia</th><th className="num">Monto por mes</th><th></th></tr>
             </thead>
             <tbody>
-              {gastosFijos.map((g) => (
-                <tr key={g.row}>
-                  <td className="strong">{g.desc}</td>
-                  <td>{g.tipo}</td>
-                  <td>{g.medio}</td>
-                  <td className="num">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</td>
-                  <td className="col-action"><button className="btn-danger-ghost" onClick={() => eliminarFijo(g)}>Eliminar</button></td>
-                </tr>
-              ))}
+              {gastosFijos.map((g) => {
+                const [estadoTxt, estadoCls] = ESTADO_FIJO[g.estado] || ESTADO_FIJO.activo;
+                return (
+                  <tr key={g.row}>
+                    <td className="strong">{g.desc}</td>
+                    <td>{g.tipo}</td>
+                    <td>{g.medio}</td>
+                    <td><span className={`badge ${estadoCls}`}>{estadoTxt}</span> <span className="muted">{vigenciaTexto(g)}</span></td>
+                    <td className="num">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</td>
+                    <td className="col-action">
+                      <div className="acciones-fijo">
+                        {g.estado === "activo" && <button className="btn-ghost-sm" onClick={() => vigenciaFijo(g, "pausar")}>Pausar</button>}
+                        {g.estado === "pausado" && <button className="btn-ghost-sm" onClick={() => vigenciaFijo(g, "reanudar")}>Reanudar</button>}
+                        {g.estado === "terminado"
+                          ? <button className="btn-ghost-sm" onClick={() => vigenciaFijo(g, "reactivar")}>Reactivar</button>
+                          : <button className="btn-ghost-sm" onClick={() => vigenciaFijo(g, "terminar")}>Terminar</button>}
+                        <button className="btn-danger-ghost" onClick={() => eliminarFijo(g)}>Eliminar</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </>
         )}
@@ -2388,11 +2449,11 @@ export default function Home() {
                   : `Un solo pago de ${fmtM(montoN)}${equiv(montoN)} (${medioTxt}).`
               };
             } else if (esFijo) {
-              // Hoy la app no guarda inicio ni fin de un gasto fijo: la proyección lo suma a TODOS los meses.
+              // Un fijo cuenta desde el mes de su fecha, todos los meses, hasta que lo pausás o terminás.
               impacto = {
-                titulo: "Todos los meses",
-                detalle: `Se suman ${fmtM(montoN)}${equiv(montoN)} a tus gastos en cada mes de la proyección (${medioTxt}).`,
-                nota: "Los gastos fijos todavía no tienen fecha de inicio ni de fin."
+                titulo: mesFecha ? `Desde ${mesFecha}, todos los meses` : "Todos los meses",
+                detalle: `Se suman ${fmtM(montoN)}${equiv(montoN)} a tus gastos en cada mes desde la fecha elegida (${medioTxt}).`,
+                nota: "Después lo podés pausar o terminar desde la lista de gastos fijos."
               };
             } else if (esIngreso) {
               impacto = { titulo: mesFecha, detalle: `Se suman ${fmtM(montoN)}${equiv(montoN)} a tus ingresos de ese mes.` };
@@ -2516,7 +2577,7 @@ export default function Home() {
                 {addStatus && <StatusMsg texto={addStatus} />}
 
                 <details className="cierre-details">
-                  <summary>Gastos fijos cargados · {gastosFijos.length} · {fmt(gastosFijos.reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0))} por mes</summary>
+                  <summary>Gastos fijos cargados · {gastosFijos.length} · {fmt(gastosFijos.filter((g) => g.estado === "activo").reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0))} por mes</summary>
                   {renderFijos()}
                 </details>
                 <details className="cierre-details">

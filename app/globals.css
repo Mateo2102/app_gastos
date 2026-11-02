@@ -232,6 +232,19 @@ button:active { transform: scale(0.98); }
 }
 .btn-danger-ghost:hover { background: var(--danger-soft); }
 
+.btn-ghost-sm {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  width: auto;
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  border-radius: 999px;
+}
+.btn-ghost-sm:hover { background: var(--surface-alt); color: var(--text); }
+.acciones-fijo { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+
 .btn-pair { display: flex; gap: 10px; }
 .btn-pair button { margin-top: 16px; flex: 1; width: auto; }
 
