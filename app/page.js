@@ -26,6 +26,14 @@ const CLASES_CARGA = [
 
 const FORMA_TARJETA = "Tarjeta de Crédito";
 
+// Paleta de los gráficos y las barras (tonos afines a los tokens de globals.css; el canvas no lee CSS).
+const PAL = {
+  gasto: "#d6402b", gastoSuave: "#efb6ab", ingreso: "#9fd6b8", ahorro: "#0a7040", piso: "#8a8576",
+  libre: "#c9c1ae", variable: "#d98a12", cuota: "#2b44d6", grid: "#e6e0d3", texto: "#5a554a"
+};
+Chart.defaults.color = PAL.texto;
+Chart.defaults.borderColor = PAL.grid;
+
 // Categorías que se ofrecen al cargar. El Tipo de la planilla (columna B) se deduce de la categoría.
 const CATEGORIAS_GASTO = [
   "Supermercado", "Entretenimiento", "Indumentaria y calzado", "Salud y belleza", "Deporte", "Tecnología",
@@ -418,10 +426,10 @@ export default function Home() {
       data: {
         labels: meses.map((m) => m.label),
         datasets: [
-          { type: "bar", label: "Ingresos", data: meses.map((m) => m.ingresos), backgroundColor: "#bfe3cc", borderRadius: 6, barPercentage: 0.7 },
-          { type: "bar", label: "Gastos", data: meses.map((m) => m.gastos), backgroundColor: "#7a0c2e", borderRadius: 6, barPercentage: 0.7 },
-          { type: "line", label: "Ahorro proyectado", data: meses.map((m) => m.ahorroProyectado), borderColor: "#1c1c1e", backgroundColor: "#1c1c1e", tension: 0.3, borderWidth: 3, pointRadius: 4 },
-          { type: "line", label: "Piso configurado", data: meses.map((m) => m.pisoConfigurado), borderColor: "#9ca3af", borderDash: [6, 4], borderWidth: 2, pointRadius: 0 }
+          { type: "bar", label: "Ingresos", data: meses.map((m) => m.ingresos), backgroundColor: PAL.ingreso, borderRadius: 6, barPercentage: 0.7 },
+          { type: "bar", label: "Gastos", data: meses.map((m) => m.gastos), backgroundColor: PAL.gasto, borderRadius: 6, barPercentage: 0.7 },
+          { type: "line", label: "Ahorro proyectado", data: meses.map((m) => m.ahorroProyectado), borderColor: PAL.ahorro, backgroundColor: PAL.ahorro, tension: 0.3, borderWidth: 3, pointRadius: 4 },
+          { type: "line", label: "Piso configurado", data: meses.map((m) => m.pisoConfigurado), borderColor: PAL.piso, borderDash: [6, 4], borderWidth: 2, pointRadius: 0 }
         ]
       },
       options: {
@@ -437,7 +445,7 @@ export default function Home() {
         },
         scales: {
           x: { grid: { display: false }, ticks: { font: { size: 12, family: "inherit" } } },
-          y: { grid: { color: "#f1f1f4" }, border: { display: false }, ticks: { font: { size: 12, family: "inherit" }, callback: (v) => fmtCorto(v) } }
+          y: { grid: { color: PAL.grid }, border: { display: false }, ticks: { font: { size: 12, family: "inherit" }, callback: (v) => fmtCorto(v) } }
         }
       }
     });
@@ -759,8 +767,8 @@ export default function Home() {
       data: {
         labels: evolutivo.map((m) => m.label),
         datasets: [
-          { label: "Total de gastos", data: evolutivo.map((m) => m.total), borderColor: "#7a0c2e", backgroundColor: "#7a0c2e", tension: 0.3, borderWidth: 3, pointRadius: 4 },
-          { label: "Categoría en la que más gasté", data: evolutivo.map((m) => (m.topCat ? m.topCat[1] : 0)), borderColor: "#b8720a", backgroundColor: "#b8720a", borderDash: [6, 4], tension: 0.3, borderWidth: 3, pointRadius: 4 }
+          { label: "Total de gastos", data: evolutivo.map((m) => m.total), borderColor: PAL.gasto, backgroundColor: PAL.gasto, tension: 0.3, borderWidth: 3, pointRadius: 4 },
+          { label: "Categoría en la que más gasté", data: evolutivo.map((m) => (m.topCat ? m.topCat[1] : 0)), borderColor: PAL.variable, backgroundColor: PAL.variable, borderDash: [6, 4], tension: 0.3, borderWidth: 3, pointRadius: 4 }
         ]
       },
       options: {
@@ -773,7 +781,7 @@ export default function Home() {
         },
         scales: {
           x: { grid: { display: false } },
-          y: { grid: { color: "#f1f1f4" }, border: { display: false }, ticks: { callback: (v) => fmt(v) } }
+          y: { grid: { color: PAL.grid }, border: { display: false }, ticks: { callback: (v) => fmt(v) } }
         }
       }
     });
@@ -854,8 +862,8 @@ export default function Home() {
       data: {
         labels: histEvolutivo.map((m) => m.label),
         datasets: [
-          { label: "Total (valor de cuota)", data: histEvolutivo.map((m) => m.total), borderColor: "#7a0c2e", backgroundColor: "#7a0c2e", tension: 0.3, borderWidth: 3, pointRadius: 4 },
-          { label: "Categoría en la que más gasté", data: histEvolutivo.map((m) => (m.topCat ? m.topCat[1] : 0)), borderColor: "#b8720a", backgroundColor: "#b8720a", borderDash: [6, 4], tension: 0.3, borderWidth: 3, pointRadius: 4 }
+          { label: "Total (valor de cuota)", data: histEvolutivo.map((m) => m.total), borderColor: PAL.gasto, backgroundColor: PAL.gasto, tension: 0.3, borderWidth: 3, pointRadius: 4 },
+          { label: "Categoría en la que más gasté", data: histEvolutivo.map((m) => (m.topCat ? m.topCat[1] : 0)), borderColor: PAL.variable, backgroundColor: PAL.variable, borderDash: [6, 4], tension: 0.3, borderWidth: 3, pointRadius: 4 }
         ]
       },
       options: {
@@ -868,7 +876,7 @@ export default function Home() {
         },
         scales: {
           x: { grid: { display: false } },
-          y: { grid: { color: "#f1f1f4" }, border: { display: false }, ticks: { callback: (v) => fmt(v) } }
+          y: { grid: { color: PAL.grid }, border: { display: false }, ticks: { callback: (v) => fmt(v) } }
         }
       }
     });
@@ -939,8 +947,8 @@ export default function Home() {
         labels: s.map((x) => x.label),
         datasets: [
           { type: "bar", label: "Gasto del mes", data: s.map((x) => x.total), borderRadius: 6, barPercentage: 0.6,
-            backgroundColor: s.map((_, i) => (i === s.length - 1 ? "#7a0c2e" : "#d9b3bd")) },
-          { type: "line", label: "Promedio", data: s.map(() => gastosKpis.promedio), borderColor: "#1c1c1e", borderDash: [6, 4], borderWidth: 2, pointRadius: 0 }
+            backgroundColor: s.map((_, i) => (i === s.length - 1 ? PAL.gasto : PAL.gastoSuave)) },
+          { type: "line", label: "Promedio", data: s.map(() => gastosKpis.promedio), borderColor: PAL.texto, borderDash: [6, 4], borderWidth: 2, pointRadius: 0 }
         ]
       },
       options: {
@@ -952,7 +960,7 @@ export default function Home() {
         },
         scales: {
           x: { grid: { display: false } },
-          y: { grid: { color: "#f1f1f4" }, border: { display: false }, ticks: { callback: (v) => fmt(v) } }
+          y: { grid: { color: PAL.grid }, border: { display: false }, ticks: { callback: (v) => fmt(v) } }
         }
       }
     });
@@ -987,8 +995,8 @@ export default function Home() {
       data: {
         labels: filas.map((f) => fechaLarga(f.fecha)),
         datasets: [
-          ...(hayARS ? [{ label: "Pesos acumulados", data: filas.map((f) => f.accARS), yAxisID: "y", borderColor: "#7a0c2e", backgroundColor: "#7a0c2e", stepped: true, borderWidth: 3, pointRadius: 4 }] : []),
-          ...(hayUSD ? [{ label: "Dólares acumulados", data: filas.map((f) => f.accUSD), yAxisID: "y2", borderColor: "#0a8a3d", backgroundColor: "#0a8a3d", stepped: true, borderWidth: 3, pointRadius: 4 }] : [])
+          ...(hayARS ? [{ label: "Pesos acumulados", data: filas.map((f) => f.accARS), yAxisID: "y", borderColor: PAL.gasto, backgroundColor: PAL.gasto, stepped: true, borderWidth: 3, pointRadius: 4 }] : []),
+          ...(hayUSD ? [{ label: "Dólares acumulados", data: filas.map((f) => f.accUSD), yAxisID: "y2", borderColor: PAL.ahorro, backgroundColor: PAL.ahorro, stepped: true, borderWidth: 3, pointRadius: 4 }] : [])
         ]
       },
       options: {
@@ -1001,7 +1009,7 @@ export default function Home() {
         },
         scales: {
           x: { grid: { display: false } },
-          y: { display: hayARS, position: "left", grid: { color: "#f1f1f4" }, border: { display: false }, ticks: { callback: (v) => fmt(v) } },
+          y: { display: hayARS, position: "left", grid: { color: PAL.grid }, border: { display: false }, ticks: { callback: (v) => fmt(v) } },
           y2: { display: hayUSD, position: "right", grid: { display: false }, border: { display: false }, ticks: { callback: (v) => fmtUSD2(v) } }
         }
       }
@@ -1169,13 +1177,13 @@ export default function Home() {
                       <span className="muted">Ingresos {fmt(mo.ingresos)}</span>
                     </div>
                     <div className="flow-bar">
-                      <span style={{ width: ancho(Math.min(mo.gastos, base)), background: "var(--red)" }}></span>
-                      <span style={{ width: ancho(mo.piso), background: "#c4c4cc" }}></span>
+                      <span style={{ width: ancho(Math.min(mo.gastos, base)), background: PAL.gasto }}></span>
+                      <span style={{ width: ancho(mo.piso), background: PAL.libre }}></span>
                       <span style={{ width: ancho(mo.ahorroProyectado), background: "var(--green)" }}></span>
                     </div>
                     <div className="flow-legend">
-                      <span><i style={{ background: "var(--red)" }}></i>Gastos {fmt(mo.gastos)}</span>
-                      <span><i style={{ background: "#c4c4cc" }}></i>Libre {fmt(mo.piso)}</span>
+                      <span><i style={{ background: PAL.gasto }}></i>Gastos {fmt(mo.gastos)}</span>
+                      <span><i style={{ background: PAL.libre }}></i>Libre {fmt(mo.piso)}</span>
                       <span><i style={{ background: "var(--green)" }}></i>Ahorro {fmt(mo.ahorroProyectado)}</span>
                     </div>
                   </section>
@@ -1282,14 +1290,14 @@ export default function Home() {
                   </div>
 
                   <div className="flow-bar">
-                    <span style={{ width: `${(Math.min(mesSel.gastos, base) / base) * 100}%`, background: "#7a0c2e" }}></span>
-                    <span style={{ width: `${(mesSel.piso / base) * 100}%`, background: "#9ca3af" }}></span>
-                    <span style={{ width: `${(mesSel.ahorroProyectado / base) * 100}%`, background: "#0a8a3d" }}></span>
+                    <span style={{ width: `${(Math.min(mesSel.gastos, base) / base) * 100}%`, background: PAL.gasto }}></span>
+                    <span style={{ width: `${(mesSel.piso / base) * 100}%`, background: PAL.piso }}></span>
+                    <span style={{ width: `${(mesSel.ahorroProyectado / base) * 100}%`, background: PAL.ahorro }}></span>
                   </div>
                   <div className="flow-legend">
-                    <span><i style={{ background: "#7a0c2e" }}></i>Gastos</span>
-                    <span><i style={{ background: "#9ca3af" }}></i>Piso</span>
-                    <span><i style={{ background: "#0a8a3d" }}></i>Ahorro</span>
+                    <span><i style={{ background: PAL.gasto }}></i>Gastos</span>
+                    <span><i style={{ background: PAL.piso }}></i>Piso</span>
+                    <span><i style={{ background: PAL.ahorro }}></i>Ahorro</span>
                   </div>
 
                   <div className="proy-stats">
@@ -1628,11 +1636,11 @@ export default function Home() {
                   <section className="card">
                     <div className="card-head"><h2>Composición del gasto</h2></div>
                     <div className="comp-bar">
-                      {[["fijo", "#7a0c2e"], ["variable", "#b8720a"], ["cuotas", "#1c1c1e"]].map(([k, color]) => (
+                      {[["fijo", PAL.gasto], ["variable", PAL.variable], ["cuotas", PAL.cuota]].map(([k, color]) => (
                         <span key={k} style={{ width: `${gastosKpis.total ? (gastosKpis.cur[k] / gastosKpis.total) * 100 : 0}%`, background: color }}></span>
                       ))}
                     </div>
-                    {[["fijo", "Gastos fijos", "#7a0c2e"], ["variable", "Gastos variables (pago único)", "#b8720a"], ["cuotas", "Compras en cuotas", "#1c1c1e"]].map(([k, nombre, color]) => (
+                    {[["fijo", "Gastos fijos", PAL.gasto], ["variable", "Gastos variables (pago único)", PAL.variable], ["cuotas", "Compras en cuotas", PAL.cuota]].map(([k, nombre, color]) => (
                       <div className="comp-row" key={k}>
                         <span className="comp-dot" style={{ background: color }}></span>
                         <span className="comp-name">{nombre}</span>
