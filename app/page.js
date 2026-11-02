@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
 import { fechaCierreDia, fechaAplicacion, describirPago } from "@/lib/closing";
+import { resumenPatrimonio, LUGARES } from "@/lib/patrimonio";
 
 const MESES_NOMBRE = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -13,10 +14,9 @@ const TABS = [
   { id: "inicio", label: "Inicio", icon: "home", sub: "" },
   { id: "gastos", label: "Gastos", icon: "receipt", sub: "Qué pasó con la plata, mes a mes." },
   { id: "tarjetas", label: "Tarjetas", icon: "card", sub: "Cierres, cuotas y gastos fijos de cada tarjeta." },
-  { id: "proyeccion", label: "Proyección", icon: "chart", sub: "Cómo vas a estar los próximos meses." },
-  { id: "ahorro", label: "Ahorro", icon: "wallet", sub: "Tu ahorro acumulado, en pesos y dólares." },
+  { id: "ahorro", label: "Ahorro e inversiones", corto: "Ahorro", icon: "wallet", sub: "Lo que ahorraste y lo que tenés invertido, y dónde está cada cosa." },
   { id: "sueldos", label: "Sueldos", icon: "coins", sub: "Lo que cobrás cada mes: sueldo y extra." },
-  { id: "graficos", label: "Gráficos", icon: "bars", sub: "Lo que pasó contra lo proyectado, mes a mes." }
+  { id: "graficos", label: "Gráficos y proyección", corto: "Gráficos", icon: "bars", sub: "Lo que pasó contra lo proyectado, y cómo vas a estar los próximos meses." }
 ];
 
 // Qué se carga en el formulario: define la "clase" de fila en la planilla (columna A).
@@ -402,7 +402,7 @@ export default function Home() {
   // El ahorro real se carga para un mes ya transcurrido (o en curso), no para el mes de
   // referencia futuro — por defecto el mes calendario actual, no mesObjetivo.
   const hoyISO = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`;
-  const [ahorroForm, setAhorroForm] = useState({ fecha: hoyISO, monto: "", moneda: "ARS" });
+  const [ahorroForm, setAhorroForm] = useState({ fecha: hoyISO, monto: "", moneda: "ARS", lugar: "", lugarOtro: "" });
   const [cobros, setCobros] = useState(null); // lo que realmente cobré (sueldo y extra); se pide al abrir Sueldos
   const [cobroForm, setCobroForm] = useState({ fecha: hoyISO, monto: "", tipo: "sueldo", nota: "" });
   const [cobroStatus, setCobroStatus] = useState("");
@@ -542,6 +542,7 @@ export default function Home() {
 
   // La pestaña "Gastos" se carga recién al abrirla, para no gastar lecturas de Sheets de más.
   function abrirTab(id) {
+    if (id === "proyeccion") { setGraficosVista("proyeccion"); id = "graficos"; } // la proyección ahora vive dentro de Gráficos
     setTab(id);
   }
 
@@ -589,7 +590,8 @@ export default function Home() {
   useEffect(() => {
     const leer = () => {
       const id = window.location.hash.replace("#", "");
-      if (TABS.some((t) => t.id === id)) setTabRaw(id);
+      if (id === "proyeccion") { setGraficosVista("proyeccion"); setTabRaw("graficos"); } // enlace viejo
+      else if (TABS.some((t) => t.id === id)) setTabRaw(id);
     };
     leer();
     window.addEventListener("popstate", leer);
@@ -613,6 +615,27 @@ export default function Home() {
     if (tab !== "graficos" || graficos !== null) return;
     fetchJSON("/api/graficos").then(setGraficos).catch((e) => setLoadError(mensajeDeError(e)));
   }, [tab, graficos]);
+
+  // Datos mes a mes de la sección Gráficos (con acumulados). Va antes que los efectos de los gráficos que lo usan.
+  const graficosSerie = useMemo(() => {
+    if (!graficos) return null;
+    let accProy = 0, accReal = 0;
+    const filas = graficos.meses.map((m) => {
+      accProy += m.ahorroProyectado;
+      if (m.ahorroReal !== null) accReal += m.ahorroReal;
+      return { ...m, accProy, accReal: m.ahorroReal === null ? null : accReal };
+    });
+    const hechos = filas.filter((m) => m.estado !== "futuro");
+    const real = hechos.reduce((acc, m) => acc + (m.ahorroReal || 0), 0);
+    const plan = hechos.reduce((acc, m) => acc + m.ahorroProyectado, 0);
+    const aprox = filas.filter((m) => m.aprox);
+    return {
+      filas, real, plan, dif: real - plan,
+      desde: filas[0] ? filas[0].label : "", hasta: hechos.length ? hechos[hechos.length - 1].label : "",
+      indiceHoy: filas.findIndex((m) => m.estado === "actual"),
+      aproxHasta: aprox.length ? aprox[aprox.length - 1].label : ""
+    };
+  }, [graficos]);
 
   useEffect(() => {
     if (!canvasRef.current || tab !== "graficos" || graficosVista !== "proyeccion") return;
@@ -645,7 +668,7 @@ export default function Home() {
         }
       }
     });
-  }, [meses, tab, graficosVista]);
+  }, [meses, tab, graficosVista, graficosSerie]);
 
   async function guardarConfig() {
     setCfgStatus("Guardando...");
@@ -711,7 +734,7 @@ export default function Home() {
       const payload = await fetchJSON("/api/ahorro", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(ahorroForm)
+        body: JSON.stringify({ ...ahorroForm, lugar: ahorroForm.lugar === "Otro" ? ahorroForm.lugarOtro : ahorroForm.lugar })
       });
       render(payload);
       setAhorroStatus("✅ Guardado");
@@ -746,6 +769,19 @@ export default function Home() {
       setGraficos(null);
     } catch (e) {
       setCobroStatus("❌ " + e.message);
+    }
+  }
+
+  // Cambia dónde está guardado un ahorro ya cargado ("" = sin ubicar).
+  async function cambiarLugarAhorro(id, lugar) {
+    try {
+      render(await fetchJSON(`/api/ahorro/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lugar })
+      }));
+    } catch (e) {
+      setAhorroStatus("❌ " + e.message);
     }
   }
 
@@ -1058,7 +1094,7 @@ export default function Home() {
         }
       }
     });
-  }, [evolutivo, tab, graficosVista]);
+  }, [evolutivo, tab, graficosVista, graficosSerie]);
 
   // ---- Pestaña "Histórico": compras por fecha de compra, por categoría, más evolutivo ----
   const histRegistros = useMemo(() => {
@@ -1153,7 +1189,7 @@ export default function Home() {
         }
       }
     });
-  }, [histEvolutivo, tab, graficosVista]);
+  }, [histEvolutivo, tab, graficosVista, graficosSerie]);
 
   // ---- Dashboard de gastos: ¿qué pasó con mi plata en el mes elegido? (solo histórico/corriente) ----
   const gastosKpis = useMemo(() => {
@@ -1236,10 +1272,16 @@ export default function Home() {
         }
       }
     });
-  }, [gastosKpis, tab, graficosVista]);
+  }, [gastosKpis, tab, graficosVista, graficosSerie]);
 
   // Tenencia de ahorro: cada movimiento con su acumulado en la moneda en que se ahorró, y los
   // totales en pesos y en dólares (más su equivalente con el dólar blue vigente).
+  // Todo lo que tengo: lo ahorrado a mano (cada uno con su lugar) más la cartera de IOL, que llega sola.
+  const patrimonio = useMemo(
+    () => resumenPatrimonio(ahorroMovs, iol && iol.cartera ? iol.cartera : null, dolarBlue || 0),
+    [ahorroMovs, iol, dolarBlue]
+  );
+
   const tenencia = useMemo(() => {
     const asc = [...ahorroMovs].sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
     const acc = { ars: 0, usd: 0 };
@@ -1256,26 +1298,6 @@ export default function Home() {
   }, [ahorroMovs, dolarBlue]);
 
   // ---- Sección "Gráficos": todo en líneas. Punteada = proyectado, sólida = real, marca vertical = hoy ----
-  const graficosSerie = useMemo(() => {
-    if (!graficos) return null;
-    let accProy = 0, accReal = 0;
-    const filas = graficos.meses.map((m) => {
-      accProy += m.ahorroProyectado;
-      if (m.ahorroReal !== null) accReal += m.ahorroReal;
-      return { ...m, accProy, accReal: m.ahorroReal === null ? null : accReal };
-    });
-    const hechos = filas.filter((m) => m.estado !== "futuro");
-    const real = hechos.reduce((acc, m) => acc + (m.ahorroReal || 0), 0);
-    const plan = hechos.reduce((acc, m) => acc + m.ahorroProyectado, 0);
-    const aprox = filas.filter((m) => m.aprox);
-    return {
-      filas, real, plan, dif: real - plan,
-      desde: filas[0] ? filas[0].label : "", hasta: hechos.length ? hechos[hechos.length - 1].label : "",
-      indiceHoy: filas.findIndex((m) => m.estado === "actual"),
-      aproxHasta: aprox.length ? aprox[aprox.length - 1].label : ""
-    };
-  }, [graficos]);
-
   // Opciones de un gráfico mensual: marca de "hoy" y, al pasar el mouse, qué tan firme es lo proyectado de ese mes.
   const opcionesMensual = (serie, formato) => {
     const o = opcionesChart(formato);
@@ -1438,7 +1460,7 @@ export default function Home() {
     linea(iolArsRef.current, "Pesos", carteraSerie.ars, PAL.cuota, fmt);
     if (carteraSerie.hayUsd) linea(iolUsdRef.current, "Dólares", carteraSerie.usd, PAL.ahorro, fmtUSD2);
     return () => charts.forEach((c) => c.destroy());
-  }, [carteraSerie, tab, graficosVista]);
+  }, [carteraSerie, tab, graficosVista, graficosSerie]);
 
   // Pesos y dólares ahorrados, cada uno en su propio gráfico (nunca dos escalas en un mismo gráfico).
   useEffect(() => {
@@ -1460,7 +1482,7 @@ export default function Home() {
       charts.push(linea(ahorroUsdRef.current, "Dólares acumulados", filas.map((f) => f.accUSD), PAL.ahorro, fmtUSD2));
     }
     return () => charts.forEach((c) => c.destroy());
-  }, [tenencia, tab, graficosVista]);
+  }, [tenencia, tab, graficosVista, graficosSerie]);
 
   function irMesActualTarjeta() {
     setTarjetaMesFiltro(mesActual);
@@ -1873,227 +1895,6 @@ export default function Home() {
                 </>
               );
             })()}
-          </div>
-        )}
-
-        {tab === "proyeccion" && (
-          <div className="stack">
-            <Segmented value={proyVista} onChange={setProyVista} options={[{ value: "proyeccion", label: "Proyección" }, { value: "sueldo", label: "Sueldo" }]} />
-            {proyVista === "proyeccion" && (
-              <>
-            <section className="card">
-              <div className="card-head-row" style={{ marginBottom: 0 }}>
-                <div>
-                  <h2>Proyección financiera</h2>
-                  <p className="hint" style={{ margin: "4px 0 0" }}>
-                    Si sigo con mis ingresos y compromisos actuales, así voy a estar los próximos meses.
-                  </p>
-                </div>
-                <div className="filtro-inline">
-                  <button className="btn-icon" aria-label="Mes anterior" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, -1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>‹</button>
-                  <select value={filtroMes} onChange={(e) => { setFiltroMes(Number(e.target.value)); verPeriodo(Number(e.target.value), filtroAnio); }}>
-                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
-                  </select>
-                  <select value={filtroAnio} onChange={(e) => { setFiltroAnio(Number(e.target.value)); verPeriodo(filtroMes, Number(e.target.value)); }}>
-                    {Array.from({ length: 6 }, (_, i) => hoy.getFullYear() - 2 + i).map((y) => <option key={y} value={y}>{y}</option>)}
-                  </select>
-                  <button className="btn-icon" aria-label="Mes siguiente" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, 1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>›</button>
-                  <button className="btn-ghost" onClick={verHoy}>Hoy</button>
-                </div>
-              </div>
-            </section>
-
-            {mesSel && (() => {
-              const est = estadoMes(mesSel);
-              const base = Math.max(mesSel.ingresos, mesSel.gastos, 1);
-              return (
-                <section className="card">
-                  <div className="card-head-row">
-                    <h2>{MESES_NOMBRE[mesSel.month]} {mesSel.year}</h2>
-                    <span className={`estado-chip estado-${est.id}`}>{est.texto}</span>
-                  </div>
-                  <div className="ahorro-hero">
-                    <div className="stat-tile-label">Ahorro proyectado</div>
-                    <div className="ahorro-hero-value">{fmt(mesSel.ahorroProyectado)}</div>
-                    <div className="stat-tile-sub">
-                      {est.id === "deficit" && `Los gastos superan a los ingresos por ${fmt(-mesSel.margen)}.`}
-                      {est.id === "ajustado" && `No alcanza para el piso de ${fmt(mesSel.pisoConfigurado)}: el piso se ajusta a ${fmt(mesSel.piso)}.`}
-                      {est.id === "ok" && `Es lo que queda por encima de tu piso de ${fmt(mesSel.pisoConfigurado)}.`}
-                      {est.id === "justo" && `Queda exactamente tu piso de ${fmt(mesSel.pisoConfigurado)}.`}
-                    </div>
-                  </div>
-
-                  <div className="flow-bar">
-                    <span style={{ width: `${(Math.min(mesSel.gastos, base) / base) * 100}%`, background: PAL.gasto }}></span>
-                    <span style={{ width: `${(mesSel.piso / base) * 100}%`, background: PAL.piso }}></span>
-                    <span style={{ width: `${(mesSel.ahorroProyectado / base) * 100}%`, background: PAL.ahorro }}></span>
-                  </div>
-                  <div className="flow-legend">
-                    <span><i style={{ background: PAL.gasto }}></i>Gastos</span>
-                    <span><i style={{ background: PAL.piso }}></i>Piso</span>
-                    <span><i style={{ background: PAL.ahorro }}></i>Ahorro</span>
-                  </div>
-
-                  <div className="proy-stats">
-                    <div><div className="stat-tile-label">Ingresos</div><div className="proy-stat-value pos">{fmt(mesSel.ingresos)}</div>
-                      {(mesSel.aguinaldo > 0 || mesSel.ingresoExtra > 0) && (
-                        <div className="subnote">
-                          {mesSel.aguinaldo > 0 ? `incl. aguinaldo ${fmt(mesSel.aguinaldo)}` : ""} {mesSel.ingresoExtra > 0 ? `incl. extra ${fmt(mesSel.ingresoExtra)}` : ""}
-                        </div>
-                      )}
-                    </div>
-                    <div><div className="stat-tile-label">Gastos proyectados</div><div className="proy-stat-value neg">{fmt(mesSel.gastos)}</div></div>
-                    <div><div className="stat-tile-label">Piso</div><div className="proy-stat-value">{fmt(mesSel.piso)}</div>
-                      {mesSel.piso < mesSel.pisoConfigurado && <div className="subnote">config. {fmt(mesSel.pisoConfigurado)}</div>}
-                    </div>
-                    <div><div className="stat-tile-label">Margen</div><div className={`proy-stat-value ${mesSel.margen < 0 ? "neg" : ""}`}>{fmt(mesSel.margen)}</div>
-                      <div className="subnote">ingresos − gastos</div>
-                    </div>
-                  </div>
-
-                  <div className="porque">
-                    <span className="muted">Por qué ese gasto:</span>{" "}
-                    Fijos <strong>{fmt(mesSel.gastoFijo)}</strong> ({mesSel.gastos ? Math.round((mesSel.gastoFijo / mesSel.gastos) * 100) : 0}%)
-                    {" · "}Cuotas y compras <strong>{fmt(mesSel.gastoVariable)}</strong> ({mesSel.gastos ? Math.round((mesSel.gastoVariable / mesSel.gastos) * 100) : 0}%)
-                  </div>
-                  {porCuentaMesActual && Object.keys(porCuentaMesActual.cuentas).length > 0 && (
-                    <div className="porque muted" style={{ fontSize: 12 }}>
-                      Por cuenta: {Object.entries(porCuentaMesActual.cuentas).sort((a, b) => b[1] - a[1]).map(([n, v]) => `${n} ${fmt(v)}`).join(" · ")}
-                    </div>
-                  )}
-                  <button className="section-link" style={{ marginTop: 12 }} onClick={() => { setGastosMesFiltro({ month: mesSel.month, year: mesSel.year }); abrirTab("gastos"); }}>
-                    Ver detalle de gastos →
-                  </button>
-                </section>
-              );
-            })()}
-
-            {alertasProy.length > 0 && (
-              <section className="card">
-                <div className="card-head"><h2>Meses a mirar</h2></div>
-                {alertasProy.slice(0, 8).map((a, i) => (
-                  <div className={`alerta-row alerta-${a.nivel}`} key={i}>
-                    <span className="alerta-icon"><Icon name={a.nivel === "ok" ? "check-circle" : (a.nivel === "info" ? "info" : "alert")} size={16} /></span>
-                    <div><strong>{a.mes}</strong> — {a.texto}</div>
-                  </div>
-                ))}
-                {alertasProy.length > 8 && <p className="hint" style={{ margin: "8px 0 0" }}>y {alertasProy.length - 8} más en la tabla de abajo.</p>}
-              </section>
-            )}
-
-            <section className="card">
-              <div className="card-head"><h2>Situación mes a mes</h2></div>
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Mes</th><th className="num">Ingresos</th><th className="num">Gastos</th>
-                      <th className="num">Piso</th><th className="num">Margen</th><th className="num">Ahorro proyectado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {meses.map((mo) => {
-                      const est = estadoMes(mo);
-                      return (
-                        <tr key={mo.key} className={est.id === "deficit" ? "row-deficit" : (est.id === "ajustado" ? "row-ajustado" : "")}>
-                          <td className="strong">{mo.label}</td>
-                          <td className="num pos">
-                            {fmt(mo.ingresos)}
-                            {mo.aguinaldo > 0 && <div className="subnote">incl. aguinaldo {fmt(mo.aguinaldo)}</div>}
-                            {mo.ingresoExtra > 0 && <div className="subnote">incl. extra {fmt(mo.ingresoExtra)}</div>}
-                          </td>
-                          <td className="num neg">{fmt(mo.gastos)}</td>
-                          <td className="num muted">
-                            {fmt(mo.piso)}
-                            {mo.piso < mo.pisoConfigurado && <div className="subnote">ajustado (config. {fmt(mo.pisoConfigurado)})</div>}
-                          </td>
-                          <td className={`num ${mo.margen < 0 ? "neg" : "muted"}`}>{fmt(mo.margen)}</td>
-                          <td className={`num ahorro-cell ${mo.ahorroProyectado > 0 ? "pos" : "muted"}`}>{fmt(mo.ahorroProyectado)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="card config-card">
-              <div className="card-head-row" style={{ marginBottom: 6 }}>
-                <h2>⚙ Piso de ahorro</h2>
-              </div>
-              <p className="hint" style={{ margin: "0 0 12px" }}>
-                El monto mínimo que quiero conservar disponible. El ahorro proyectado es lo que queda de
-                ingresos − gastos después de reservar este piso; si no alcanza, el piso se ajusta a lo que hay.
-              </p>
-              <div className="field-row">
-                <div className="field">
-                  <label>Piso disponible (siempre libre)</label>
-                  <input type="number" placeholder="400000" value={cfgPiso} onChange={(e) => setCfgPiso(e.target.value)} />
-                </div>
-                <div className="field field-action">
-                  <button className="btn-primary" onClick={guardarConfig}>Guardar</button>
-                </div>
-              </div>
-              {cfgStatus && <StatusMsg texto={cfgStatus} />}
-            </section>
-              </>
-            )}
-            {proyVista === "sueldo" && (
-              <>
-            <section className="card">
-              <div className="card-head">
-                <h2>Evolución del sueldo</h2>
-              </div>
-              <p className="hint" style={{ margin: "0 0 16px" }}>
-                Cargá desde qué mes rige cada sueldo — por ejemplo, &ldquo;desde septiembre $X&rdquo; y &ldquo;desde
-                diciembre $Y&rdquo; para un aumento ya sabido. El tablero usa el tramo vigente en cada mes de la
-                proyección, y el aguinaldo (medio sueldo) se suma solo en junio y diciembre.
-              </p>
-
-              {sueldoSchedule.length > 0 && (
-                <div className="table-scroll" style={{ marginBottom: 16 }}>
-                  <table>
-                    <thead>
-                      <tr><th>Vigente desde</th><th className="num">Sueldo</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {sueldoSchedule.map((t) => (
-                        <tr key={t.key}>
-                          <td className="strong">{labelTramo(t.key)}</td>
-                          <td className="num">{fmt(t.monto)}</td>
-                          <td className="col-action">
-                            <button className="btn-danger-ghost" onClick={() => eliminarTramoSueldo(t.key)}>Eliminar</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              <div className="field-row">
-                <div className="field">
-                  <label>Vigente desde (mes)</label>
-                  <select value={sueldoForm.month} onChange={(e) => setSueldoForm({ ...sueldoForm, month: Number(e.target.value) })}>
-                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>Año</label>
-                  <input type="number" value={sueldoForm.year} onChange={(e) => setSueldoForm({ ...sueldoForm, year: Number(e.target.value) })} />
-                </div>
-                <div className="field">
-                  <label>Monto del sueldo</label>
-                  <input type="number" placeholder="0" value={sueldoForm.monto} onChange={(e) => setSueldoForm({ ...sueldoForm, monto: e.target.value })} />
-                </div>
-                <div className="field field-action">
-                  <button className="btn-primary" onClick={agregarTramoSueldo}>Agregar tramo</button>
-                </div>
-              </div>
-              {sueldoStatus && <StatusMsg texto={sueldoStatus} />}
-            </section>
-              </>
-            )}
           </div>
         )}
 
@@ -2667,10 +2468,228 @@ export default function Home() {
                 )}
 
                 {graficosVista === "proyeccion" && (
-                  <section className="card">
-                    <div className="card-head"><h2>Evolución de los próximos meses</h2></div>
-                    <div className="chart-box"><canvas ref={canvasRef}></canvas></div>
-                  </section>
+                  <>
+            <Segmented value={proyVista} onChange={setProyVista} options={[{ value: "proyeccion", label: "Proyección" }, { value: "sueldo", label: "Sueldo" }]} />
+            {proyVista === "proyeccion" && (
+              <>
+            <section className="card">
+              <div className="card-head"><h2>Evolución de los próximos meses</h2></div>
+              <div className="chart-box"><canvas ref={canvasRef}></canvas></div>
+            </section>
+            <section className="card">
+              <div className="card-head-row" style={{ marginBottom: 0 }}>
+                <div>
+                  <h2>Proyección financiera</h2>
+                  <p className="hint" style={{ margin: "4px 0 0" }}>
+                    Si sigo con mis ingresos y compromisos actuales, así voy a estar los próximos meses.
+                  </p>
+                </div>
+                <div className="filtro-inline">
+                  <button className="btn-icon" aria-label="Mes anterior" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, -1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>‹</button>
+                  <select value={filtroMes} onChange={(e) => { setFiltroMes(Number(e.target.value)); verPeriodo(Number(e.target.value), filtroAnio); }}>
+                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                  </select>
+                  <select value={filtroAnio} onChange={(e) => { setFiltroAnio(Number(e.target.value)); verPeriodo(filtroMes, Number(e.target.value)); }}>
+                    {Array.from({ length: 6 }, (_, i) => hoy.getFullYear() - 2 + i).map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <button className="btn-icon" aria-label="Mes siguiente" onClick={() => { const n = shiftMes(filtroMes, filtroAnio, 1); setFiltroMes(n.month); setFiltroAnio(n.year); verPeriodo(n.month, n.year); }}>›</button>
+                  <button className="btn-ghost" onClick={verHoy}>Hoy</button>
+                </div>
+              </div>
+            </section>
+
+            {mesSel && (() => {
+              const est = estadoMes(mesSel);
+              const base = Math.max(mesSel.ingresos, mesSel.gastos, 1);
+              return (
+                <section className="card">
+                  <div className="card-head-row">
+                    <h2>{MESES_NOMBRE[mesSel.month]} {mesSel.year}</h2>
+                    <span className={`estado-chip estado-${est.id}`}>{est.texto}</span>
+                  </div>
+                  <div className="ahorro-hero">
+                    <div className="stat-tile-label">Ahorro proyectado</div>
+                    <div className="ahorro-hero-value">{fmt(mesSel.ahorroProyectado)}</div>
+                    <div className="stat-tile-sub">
+                      {est.id === "deficit" && `Los gastos superan a los ingresos por ${fmt(-mesSel.margen)}.`}
+                      {est.id === "ajustado" && `No alcanza para el piso de ${fmt(mesSel.pisoConfigurado)}: el piso se ajusta a ${fmt(mesSel.piso)}.`}
+                      {est.id === "ok" && `Es lo que queda por encima de tu piso de ${fmt(mesSel.pisoConfigurado)}.`}
+                      {est.id === "justo" && `Queda exactamente tu piso de ${fmt(mesSel.pisoConfigurado)}.`}
+                    </div>
+                  </div>
+
+                  <div className="flow-bar">
+                    <span style={{ width: `${(Math.min(mesSel.gastos, base) / base) * 100}%`, background: PAL.gasto }}></span>
+                    <span style={{ width: `${(mesSel.piso / base) * 100}%`, background: PAL.piso }}></span>
+                    <span style={{ width: `${(mesSel.ahorroProyectado / base) * 100}%`, background: PAL.ahorro }}></span>
+                  </div>
+                  <div className="flow-legend">
+                    <span><i style={{ background: PAL.gasto }}></i>Gastos</span>
+                    <span><i style={{ background: PAL.piso }}></i>Piso</span>
+                    <span><i style={{ background: PAL.ahorro }}></i>Ahorro</span>
+                  </div>
+
+                  <div className="proy-stats">
+                    <div><div className="stat-tile-label">Ingresos</div><div className="proy-stat-value pos">{fmt(mesSel.ingresos)}</div>
+                      {(mesSel.aguinaldo > 0 || mesSel.ingresoExtra > 0) && (
+                        <div className="subnote">
+                          {mesSel.aguinaldo > 0 ? `incl. aguinaldo ${fmt(mesSel.aguinaldo)}` : ""} {mesSel.ingresoExtra > 0 ? `incl. extra ${fmt(mesSel.ingresoExtra)}` : ""}
+                        </div>
+                      )}
+                    </div>
+                    <div><div className="stat-tile-label">Gastos proyectados</div><div className="proy-stat-value neg">{fmt(mesSel.gastos)}</div></div>
+                    <div><div className="stat-tile-label">Piso</div><div className="proy-stat-value">{fmt(mesSel.piso)}</div>
+                      {mesSel.piso < mesSel.pisoConfigurado && <div className="subnote">config. {fmt(mesSel.pisoConfigurado)}</div>}
+                    </div>
+                    <div><div className="stat-tile-label">Margen</div><div className={`proy-stat-value ${mesSel.margen < 0 ? "neg" : ""}`}>{fmt(mesSel.margen)}</div>
+                      <div className="subnote">ingresos − gastos</div>
+                    </div>
+                  </div>
+
+                  <div className="porque">
+                    <span className="muted">Por qué ese gasto:</span>{" "}
+                    Fijos <strong>{fmt(mesSel.gastoFijo)}</strong> ({mesSel.gastos ? Math.round((mesSel.gastoFijo / mesSel.gastos) * 100) : 0}%)
+                    {" · "}Cuotas y compras <strong>{fmt(mesSel.gastoVariable)}</strong> ({mesSel.gastos ? Math.round((mesSel.gastoVariable / mesSel.gastos) * 100) : 0}%)
+                  </div>
+                  {porCuentaMesActual && Object.keys(porCuentaMesActual.cuentas).length > 0 && (
+                    <div className="porque muted" style={{ fontSize: 12 }}>
+                      Por cuenta: {Object.entries(porCuentaMesActual.cuentas).sort((a, b) => b[1] - a[1]).map(([n, v]) => `${n} ${fmt(v)}`).join(" · ")}
+                    </div>
+                  )}
+                  <button className="section-link" style={{ marginTop: 12 }} onClick={() => { setGastosMesFiltro({ month: mesSel.month, year: mesSel.year }); abrirTab("gastos"); }}>
+                    Ver detalle de gastos →
+                  </button>
+                </section>
+              );
+            })()}
+
+            {alertasProy.length > 0 && (
+              <section className="card">
+                <div className="card-head"><h2>Meses a mirar</h2></div>
+                {alertasProy.slice(0, 8).map((a, i) => (
+                  <div className={`alerta-row alerta-${a.nivel}`} key={i}>
+                    <span className="alerta-icon"><Icon name={a.nivel === "ok" ? "check-circle" : (a.nivel === "info" ? "info" : "alert")} size={16} /></span>
+                    <div><strong>{a.mes}</strong> — {a.texto}</div>
+                  </div>
+                ))}
+                {alertasProy.length > 8 && <p className="hint" style={{ margin: "8px 0 0" }}>y {alertasProy.length - 8} más en la tabla de abajo.</p>}
+              </section>
+            )}
+
+            <section className="card">
+              <div className="card-head"><h2>Situación mes a mes</h2></div>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Mes</th><th className="num">Ingresos</th><th className="num">Gastos</th>
+                      <th className="num">Piso</th><th className="num">Margen</th><th className="num">Ahorro proyectado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {meses.map((mo) => {
+                      const est = estadoMes(mo);
+                      return (
+                        <tr key={mo.key} className={est.id === "deficit" ? "row-deficit" : (est.id === "ajustado" ? "row-ajustado" : "")}>
+                          <td className="strong">{mo.label}</td>
+                          <td className="num pos">
+                            {fmt(mo.ingresos)}
+                            {mo.aguinaldo > 0 && <div className="subnote">incl. aguinaldo {fmt(mo.aguinaldo)}</div>}
+                            {mo.ingresoExtra > 0 && <div className="subnote">incl. extra {fmt(mo.ingresoExtra)}</div>}
+                          </td>
+                          <td className="num neg">{fmt(mo.gastos)}</td>
+                          <td className="num muted">
+                            {fmt(mo.piso)}
+                            {mo.piso < mo.pisoConfigurado && <div className="subnote">ajustado (config. {fmt(mo.pisoConfigurado)})</div>}
+                          </td>
+                          <td className={`num ${mo.margen < 0 ? "neg" : "muted"}`}>{fmt(mo.margen)}</td>
+                          <td className={`num ahorro-cell ${mo.ahorroProyectado > 0 ? "pos" : "muted"}`}>{fmt(mo.ahorroProyectado)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="card config-card">
+              <div className="card-head-row" style={{ marginBottom: 6 }}>
+                <h2>⚙ Piso de ahorro</h2>
+              </div>
+              <p className="hint" style={{ margin: "0 0 12px" }}>
+                El monto mínimo que quiero conservar disponible. El ahorro proyectado es lo que queda de
+                ingresos − gastos después de reservar este piso; si no alcanza, el piso se ajusta a lo que hay.
+              </p>
+              <div className="field-row">
+                <div className="field">
+                  <label>Piso disponible (siempre libre)</label>
+                  <input type="number" placeholder="400000" value={cfgPiso} onChange={(e) => setCfgPiso(e.target.value)} />
+                </div>
+                <div className="field field-action">
+                  <button className="btn-primary" onClick={guardarConfig}>Guardar</button>
+                </div>
+              </div>
+              {cfgStatus && <StatusMsg texto={cfgStatus} />}
+            </section>
+              </>
+            )}
+            {proyVista === "sueldo" && (
+              <>
+            <section className="card">
+              <div className="card-head">
+                <h2>Evolución del sueldo</h2>
+              </div>
+              <p className="hint" style={{ margin: "0 0 16px" }}>
+                Cargá desde qué mes rige cada sueldo — por ejemplo, &ldquo;desde septiembre $X&rdquo; y &ldquo;desde
+                diciembre $Y&rdquo; para un aumento ya sabido. El tablero usa el tramo vigente en cada mes de la
+                proyección, y el aguinaldo (medio sueldo) se suma solo en junio y diciembre.
+              </p>
+
+              {sueldoSchedule.length > 0 && (
+                <div className="table-scroll" style={{ marginBottom: 16 }}>
+                  <table>
+                    <thead>
+                      <tr><th>Vigente desde</th><th className="num">Sueldo</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {sueldoSchedule.map((t) => (
+                        <tr key={t.key}>
+                          <td className="strong">{labelTramo(t.key)}</td>
+                          <td className="num">{fmt(t.monto)}</td>
+                          <td className="col-action">
+                            <button className="btn-danger-ghost" onClick={() => eliminarTramoSueldo(t.key)}>Eliminar</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="field-row">
+                <div className="field">
+                  <label>Vigente desde (mes)</label>
+                  <select value={sueldoForm.month} onChange={(e) => setSueldoForm({ ...sueldoForm, month: Number(e.target.value) })}>
+                    {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Año</label>
+                  <input type="number" value={sueldoForm.year} onChange={(e) => setSueldoForm({ ...sueldoForm, year: Number(e.target.value) })} />
+                </div>
+                <div className="field">
+                  <label>Monto del sueldo</label>
+                  <input type="number" placeholder="0" value={sueldoForm.monto} onChange={(e) => setSueldoForm({ ...sueldoForm, monto: e.target.value })} />
+                </div>
+                <div className="field field-action">
+                  <button className="btn-primary" onClick={agregarTramoSueldo}>Agregar tramo</button>
+                </div>
+              </div>
+              {sueldoStatus && <StatusMsg texto={sueldoStatus} />}
+            </section>
+              </>
+            )}
+                  </>
                 )}
 
                 <details className="cierre-details">
@@ -2703,31 +2722,65 @@ export default function Home() {
 
         {tab === "ahorro" && (
           <div className="stack">
+            <section className="card">
+              <div className="card-head-row">
+                <h2>Ahorro e inversiones</h2>
+                <div className="tarjeta-totales">
+                  <span className="badge badge-total">{fmt(patrimonio.equivArs)}</span>
+                  <span className="badge badge-neutral">≈ {fmtUSD2(patrimonio.equivUsd)}</span>
+                </div>
+              </div>
+              <p className="hint" style={{ margin: "0 0 10px" }}>
+                Todo lo que tenés: lo que cargaste a mano más tu cartera de IOL. Los dólares se pasan a pesos al blue de hoy ({fmt(dolarBlue || 0)}).
+              </p>
+              {patrimonio.lugares.length === 0 ? (
+                <div className="empty-hint">Todavía no cargaste ahorros. Agregá el primero abajo.</div>
+              ) : (
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr><th>Dónde está</th><th className="num">Pesos</th><th className="num">Dólares</th><th className="num">Parte</th></tr>
+                    </thead>
+                    <tbody>
+                      {patrimonio.lugares.map((l) => (
+                        <tr key={l.lugar}>
+                          <td className="strong">{l.lugar}{l.automatico ? <span className="muted"> · se actualiza solo</span> : null}</td>
+                          <td className="num">{l.ars ? fmt(l.ars) : "—"}</td>
+                          <td className="num">{l.usd ? fmtUSD2(l.usd) : "—"}</td>
+                          <td className="num">{Math.round(l.parte * 100)}%</td>
+                        </tr>
+                      ))}
+                      <tr className="fila-total">
+                        <td className="strong">Total</td>
+                        <td className="num strong">{fmt(patrimonio.total.ars)}</td>
+                        <td className="num strong">{fmtUSD2(patrimonio.total.usd)}</td>
+                        <td className="num">100%</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="hint" style={{ margin: "10px 0 0" }}>
+                {iol && iol.error
+                  ? "No pude leer IOL ahora, así que el total no lo incluye."
+                  : (iol && iol.configurado
+                    ? "Lo que está en IOL aparece solo: no lo cargues a mano. Lo que dejás quieto, cargalo abajo con su lugar."
+                    : "Lo que dejás quieto, cargalo abajo con su lugar. Cuando conectes IOL, lo que transfieras ahí se suma solo.")}
+              </p>
+            </section>
+
             <div className="two-col">
               <section className="card">
-                <div className="stat-tile-label">Ahorrado en pesos</div>
+                <div className="stat-tile-label">Ahorrado a mano en pesos</div>
                 <div className="stat-tile-value">{fmt(tenencia.totalARS)}</div>
                 <div className="stat-tile-sub">≈ {fmtUSD2(dolarBlue ? tenencia.totalARS / dolarBlue : 0)} al dólar blue</div>
               </section>
               <section className="card">
-                <div className="stat-tile-label">Ahorrado en dólares</div>
+                <div className="stat-tile-label">Ahorrado a mano en dólares</div>
                 <div className="stat-tile-value">{fmtUSD2(tenencia.totalUSD)}</div>
                 <div className="stat-tile-sub">≈ {fmt(tenencia.totalUSD * (dolarBlue || 0))} al dólar blue</div>
               </section>
             </div>
-
-            <section className="card">
-              <div className="card-head-row">
-                <h2>Tenencia total</h2>
-                <div className="tarjeta-totales">
-                  <span className="badge badge-total">{fmt(tenencia.equivARS)}</span>
-                  <span className="badge badge-neutral">≈ {fmtUSD2(tenencia.equivUSD)}</span>
-                </div>
-              </div>
-              {tenencia.filas.length === 0 && (
-                <div className="empty-hint">Todavía no cargaste ahorros. Agregá el primero abajo.</div>
-              )}
-            </section>
 
             <section className="card">
               <div className="card-head-row">
@@ -2822,6 +2875,11 @@ export default function Home() {
                       <div className="mov-acum">
                         <span className="muted">Acumulado</span>{" "}
                         {f.moneda === "USD" ? fmtUSD2(f.accUSD) : fmt(f.accARS)}
+                        <select className="lugar-select" aria-label="Dónde está" value={f.lugar || ""} onChange={(e) => cambiarLugarAhorro(f.id, e.target.value)}>
+                          <option value="">Sin ubicar</option>
+                          {LUGARES.filter((l) => l !== "Otro").map((l) => <option key={l} value={l}>{l}</option>)}
+                          {f.lugar && !LUGARES.includes(f.lugar) ? <option value={f.lugar}>{f.lugar}</option> : null}
+                        </select>
                       </div>
                       <button className="btn-danger-ghost" onClick={() => eliminarAhorro(f.id)}>Eliminar</button>
                     </div>
@@ -2846,10 +2904,26 @@ export default function Home() {
                     <label>Monto ahorrado</label>
                     <input type="number" placeholder="0" value={ahorroForm.monto} onChange={(e) => setAhorroForm({ ...ahorroForm, monto: e.target.value })} />
                   </div>
+                </div>
+                <div className="field-row">
+                  <div className="field">
+                    <label>¿Dónde lo dejás?</label>
+                    <select value={ahorroForm.lugar} onChange={(e) => setAhorroForm({ ...ahorroForm, lugar: e.target.value })}>
+                      <option value="">Sin ubicar</option>
+                      {LUGARES.map((l) => <option key={l} value={l}>{l === "Otro" ? "Otro…" : l}</option>)}
+                    </select>
+                  </div>
+                  {ahorroForm.lugar === "Otro" && (
+                    <div className="field">
+                      <label>¿Dónde?</label>
+                      <input type="text" maxLength={40} placeholder="Ej.: casa de mis viejos" value={ahorroForm.lugarOtro} onChange={(e) => setAhorroForm({ ...ahorroForm, lugarOtro: e.target.value })} />
+                    </div>
+                  )}
                   <div className="field field-action">
                     <button className="btn-primary" onClick={guardarAhorro}>Agregar</button>
                   </div>
                 </div>
+                <p className="hint" style={{ margin: "8px 0 0" }}>Si lo dejás en IOL, transferilo a IOL y aparece solo: no lo cargues acá.</p>
               </div>
               {ahorroStatus && <StatusMsg texto={ahorroStatus} />}
             </section>
@@ -3404,7 +3478,7 @@ export default function Home() {
             onClick={() => abrirTab(t.id)}
           >
             <Icon name={t.icon} size={22} />
-            <span>{t.label}</span>
+            <span>{t.corto || t.label}</span>
           </button>
         ))}
       </nav>

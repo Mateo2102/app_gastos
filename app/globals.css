@@ -1215,3 +1215,6 @@ td.num.neg { color: var(--danger); font-weight: 600; }
 
 .pasos-iol { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13.5px; }
 .pasos-iol code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-alt); padding: 1px 6px; border-radius: 6px; }
+
+.lugar-select { display: block; width: auto; max-width: 100%; margin: 6px 0 0; padding: 6px 8px; font-size: 12.5px; }
+.fila-total td { border-top: 2px solid var(--border); }
