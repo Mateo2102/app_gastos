@@ -747,6 +747,39 @@ button.kpi-card:hover { box-shadow: var(--shadow-lift); }
 .resumen-text { margin-top: 4px; font-size: 14.5px; }
 .btn-big { padding: 14px 16px; font-size: 15px; margin-top: 16px; }
 
+/* Cargar como ventana flotante */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(20, 20, 25, 0.5);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 24px 12px; overflow-y: auto;
+}
+.modal {
+  background: #fff; width: 100%; max-width: 640px;
+  border-radius: 14px; padding: 20px 22px 24px;
+  box-shadow: 0 20px 50px rgba(20, 20, 25, 0.3);
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.modal-head h2 { margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+.chip {
+  width: auto; margin: 0; padding: 7px 13px; border-radius: 999px;
+  background: var(--surface-alt); border: 2px solid transparent; color: var(--text);
+  font-size: 13.5px; font-weight: 600;
+}
+.chip:hover { background: var(--red-soft); }
+.chip.active { border-color: var(--red); background: var(--red-soft); color: var(--red-dark); }
+.check-row { display: flex; align-items: center; gap: 10px; font-weight: 600; padding: 10px 0; cursor: pointer; }
+.check-row input { width: auto; margin: 0; }
+.cierre-details { margin-top: 14px; }
+.cierre-details summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--text-muted); }
+.impacto-box {
+  margin-top: 18px; padding: 14px 16px; border-radius: var(--radius-sm);
+  background: var(--surface-alt); border: 1px dashed var(--red-soft-2);
+}
+.impacto-box.ok { border-style: solid; border-color: var(--red); background: var(--red-soft); }
+.impacto-titulo { font-size: 20px; font-weight: 800; margin: 2px 0; }
+
 .reciente-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .reciente-row:last-child { border-bottom: none; }
 .reciente-main { display: flex; flex-direction: column; min-width: 0; }
