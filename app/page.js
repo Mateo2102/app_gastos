@@ -371,6 +371,8 @@ export default function Home() {
   const [cobroAbierto, setCobroAbierto] = useState(false);
   const [graficos, setGraficos] = useState(null); // evolutivo contra proyectado (se pide al abrir Gráficos)
   const [graficosVista, setGraficosVista] = useState("ahorro");
+  const [iol, setIol] = useState(null); // cartera de IOL (solo lectura); { configurado, cartera, fotos } o { error }
+  const [iolCargando, setIolCargando] = useState(false);
   const [sueldoAgrupar, setSueldoAgrupar] = useState("mes"); // mes | trimestre | anio
   const [sueldoAnio, setSueldoAnio] = useState("todos");
   const [saldoMonto, setSaldoMonto] = useState(""); // lo que tengo hoy
@@ -448,6 +450,8 @@ export default function Home() {
   const ahorroUsdRef = useRef(null);
   const ahorroMesRef = useRef(null);
   const sueldoRef = useRef(null);
+  const iolArsRef = useRef(null);
+  const iolUsdRef = useRef(null);
   const ingresoRef = useRef(null);
   const ahorroAcumRef = useRef(null);
   const gastoIngRef = useRef(null);
@@ -594,7 +598,6 @@ export default function Home() {
 
   // "Cuotas del mes" se trae recién al abrir Tarjetas (una lectura menos en la carga inicial).
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga bajo demanda vía fetch
     if (tab === "tarjetas" && cuotasMes === null) cargarCuotasMes().catch((e) => setLoadError(mensajeDeError(e)));
     if ((tab === "gastos" || tab === "graficos") && gastosHist === null) cargarGastosMes().catch((e) => setLoadError(mensajeDeError(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1395,6 +1398,47 @@ export default function Home() {
     });
     return () => chart.destroy();
   }, [sueldoSerie, sueldoAgrupar, tab, graficosVista]);
+
+  // Cartera de IOL (solo lectura): se pide al abrir Ahorro o Gráficos → Cartera. Un error de IOL se muestra ahí mismo.
+  async function cargarIol(forzar = false) {
+    setIolCargando(true);
+    try {
+      setIol(await fetchJSON(forzar ? "/api/iol?forzar=1" : "/api/iol"));
+    } catch (e) {
+      setIol((previo) => (previo && previo.cartera ? previo : { configurado: true, error: e.message }));
+    } finally {
+      setIolCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    if (iol !== null || !(tab === "ahorro" || (tab === "graficos" && graficosVista === "cartera"))) return;
+    cargarIol();
+  }, [tab, graficosVista, iol]);
+
+  // Evolutivo de la cartera: una foto por día, en pesos y en dólares por separado (nunca dos escalas juntas).
+  const carteraSerie = useMemo(() => {
+    if (!iol || !iol.fotos) return null;
+    const dias = Object.keys(iol.fotos).sort();
+    if (!dias.length) return null;
+    const ars = dias.map((d) => iol.fotos[d].ars);
+    const usd = dias.map((d) => iol.fotos[d].usd);
+    const variacion = (serie) => (serie.length > 1 && serie[0] > 0 ? (serie[serie.length - 1] - serie[0]) / serie[0] : null);
+    return { dias, ars, usd, hayUsd: usd.some((v) => v > 0), varArs: variacion(ars), varUsd: variacion(usd) };
+  }, [iol]);
+
+  useEffect(() => {
+    if (tab !== "graficos" || graficosVista !== "cartera" || !carteraSerie) return undefined;
+    const charts = [];
+    const linea = (canvas, etiqueta, datos, color, formato) => canvas && charts.push(new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: { labels: carteraSerie.dias.map(fechaLarga), datasets: [lineaReal(etiqueta, datos, color)] },
+      options: { ...opcionesChart(formato), plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` ${etiqueta}: ${formato(ctx.parsed.y)}` } } } }
+    }));
+    linea(iolArsRef.current, "Pesos", carteraSerie.ars, PAL.cuota, fmt);
+    if (carteraSerie.hayUsd) linea(iolUsdRef.current, "Dólares", carteraSerie.usd, PAL.ahorro, fmtUSD2);
+    return () => charts.forEach((c) => c.destroy());
+  }, [carteraSerie, tab, graficosVista]);
 
   // Pesos y dólares ahorrados, cada uno en su propio gráfico (nunca dos escalas en un mismo gráfico).
   useEffect(() => {
@@ -2397,7 +2441,7 @@ export default function Home() {
 
         {tab === "graficos" && (
           <div className="stack">
-            <Segmented value={graficosVista} onChange={setGraficosVista} options={[{ value: "ahorro", label: "Ahorro" }, { value: "gastos", label: "Gastos" }, { value: "sueldos", label: "Sueldos" }, { value: "proyeccion", label: "Proyección" }]} />
+            <Segmented value={graficosVista} onChange={setGraficosVista} options={[{ value: "ahorro", label: "Ahorro" }, { value: "gastos", label: "Gastos" }, { value: "sueldos", label: "Sueldos" }, { value: "cartera", label: "Cartera" }, { value: "proyeccion", label: "Proyección" }]} />
 
             {graficosSerie === null ? (
               <section className="card"><Skeleton /></section>
@@ -2574,6 +2618,54 @@ export default function Home() {
                   )
                 )}
 
+                {graficosVista === "cartera" && (
+                  iol === null ? (
+                    <section className="card"><Skeleton /></section>
+                  ) : !iol.configurado || iol.error ? (
+                    <section className="card">
+                      <div className="card-head"><h2>Evolutivo de la cartera</h2></div>
+                      <div className="empty-hint">{iol.error ? iol.error : "Conectá IOL desde la pestaña Ahorro para ver acá cómo evoluciona tu cartera."}</div>
+                    </section>
+                  ) : !carteraSerie ? (
+                    <section className="card"><Skeleton /></section>
+                  ) : (
+                    <>
+                      <div className="kpi-3">
+                        <section className="card">
+                          <div className="stat-tile-label">Cartera en pesos</div>
+                          <div className="stat-tile-value">{fmt(iol.cartera.total.ars)}</div>
+                          <div className="stat-tile-sub">
+                            {carteraSerie.varArs === null ? "se compara a partir del segundo día" : `${textoVariacion(carteraSerie.varArs)} desde el ${fechaLarga(carteraSerie.dias[0])}`}
+                          </div>
+                        </section>
+                        <section className="card">
+                          <div className="stat-tile-label">Cartera en dólares</div>
+                          <div className="stat-tile-value">{fmtUSD2(iol.cartera.total.usd)}</div>
+                          <div className="stat-tile-sub">
+                            {carteraSerie.varUsd === null ? "se compara a partir del segundo día" : `${textoVariacion(carteraSerie.varUsd)} desde el ${fechaLarga(carteraSerie.dias[0])}`}
+                          </div>
+                        </section>
+                        <section className="card">
+                          <div className="stat-tile-label">Días registrados</div>
+                          <div className="stat-tile-value">{carteraSerie.dias.length}</div>
+                          <div className="stat-tile-sub">una foto por día</div>
+                        </section>
+                      </div>
+                      <section className="card">
+                        <div className="card-head"><h2>Cartera en pesos</h2></div>
+                        <div className="chart-box"><canvas ref={iolArsRef}></canvas></div>
+                      </section>
+                      {carteraSerie.hayUsd && (
+                        <section className="card">
+                          <div className="card-head"><h2>Cartera en dólares</h2></div>
+                          <div className="chart-box"><canvas ref={iolUsdRef}></canvas></div>
+                        </section>
+                      )}
+                      <p className="hint grafico-nota">Incluye lo invertido y lo disponible en tu cuenta de IOL. Se guarda una foto por día, la primera vez que abrís Ahorro o esta vista; el historial arranca desde que conectaste IOL. Los movimientos de plata (depósitos y retiros) también mueven la línea.</p>
+                    </>
+                  )
+                )}
+
                 {graficosVista === "proyeccion" && (
                   <section className="card">
                     <div className="card-head"><h2>Evolución de los próximos meses</h2></div>
@@ -2634,6 +2726,84 @@ export default function Home() {
               </div>
               {tenencia.filas.length === 0 && (
                 <div className="empty-hint">Todavía no cargaste ahorros. Agregá el primero abajo.</div>
+              )}
+            </section>
+
+            <section className="card">
+              <div className="card-head-row">
+                <h2>Inversiones en IOL</h2>
+                {iol && iol.configurado && !iol.error && (
+                  <button className="btn-ghost-sm" onClick={() => cargarIol(true)} disabled={iolCargando}>{iolCargando ? "Actualizando..." : "Actualizar"}</button>
+                )}
+              </div>
+              {iol === null ? (
+                <Skeleton />
+              ) : !iol.configurado ? (
+                <>
+                  <p className="hint" style={{ margin: "0 0 8px" }}>Conectá tu cuenta de InvertirOnline para ver acá tu cartera. Es solo lectura: la app consulta, no compra ni vende.</p>
+                  <details className="cierre-details">
+                    <summary>Cómo conectarla</summary>
+                    <ol className="pasos-iol">
+                      <li>Pedile a IOL que active la API desde tu cuenta (Mi cuenta → API) y aceptá los términos. Confirmá antes si tiene costo.</li>
+                      <li>En Vercel → Settings → Environment Variables cargá <code>IOL_USUARIO</code> y <code>IOL_CLAVE</code> (entorno Production).</li>
+                      <li>Volvé a desplegar (Redeploy). Tu clave queda solo en Vercel: no pasa por la planilla ni por el navegador.</li>
+                    </ol>
+                  </details>
+                </>
+              ) : iol.error ? (
+                <>
+                  <StatusMsg texto={"❌ " + iol.error} />
+                  <button className="btn-ghost" style={{ marginTop: 10 }} onClick={() => cargarIol(true)} disabled={iolCargando}>Reintentar</button>
+                </>
+              ) : (
+                <>
+                  <div className="kpi-3">
+                    <div className="card">
+                      <div className="stat-tile-label">Total en pesos</div>
+                      <div className="stat-tile-value">{fmt(iol.cartera.total.ars)}</div>
+                      <div className="stat-tile-sub">invertido {fmt(iol.cartera.invertido.ars)} · disponible {fmt(iol.cartera.disponible.ars)}</div>
+                    </div>
+                    <div className="card">
+                      <div className="stat-tile-label">Total en dólares</div>
+                      <div className="stat-tile-value">{fmtUSD2(iol.cartera.total.usd)}</div>
+                      <div className="stat-tile-sub">invertido {fmtUSD2(iol.cartera.invertido.usd)} · disponible {fmtUSD2(iol.cartera.disponible.usd)}</div>
+                    </div>
+                    <div className="card">
+                      <div className="stat-tile-label">Todo en pesos</div>
+                      <div className="stat-tile-value">{fmt(iol.cartera.total.ars + iol.cartera.total.usd * (dolarBlue || 0))}</div>
+                      <div className="stat-tile-sub">con los dólares al blue de hoy</div>
+                    </div>
+                  </div>
+                  {iol.cartera.activos.length === 0 ? (
+                    <div className="empty-hint">No hay títulos en tu cartera.</div>
+                  ) : (
+                    <div className="table-scroll">
+                      <table>
+                        <thead>
+                          <tr><th>Título</th><th className="num">Cantidad</th><th className="num">Precio</th><th className="num">Valor</th><th className="num">Ganancia</th><th className="num">Hoy</th></tr>
+                        </thead>
+                        <tbody>
+                          {iol.cartera.activos.map((a) => {
+                            const f = a.moneda === "USD" ? fmtUSD2 : fmt;
+                            return (
+                              <tr key={a.simbolo + a.moneda}>
+                                <td className="strong">{a.simbolo}<span className="muted"> {a.descripcion}</span></td>
+                                <td className="num">{a.cantidad.toLocaleString("es-AR")}</td>
+                                <td className="num">{f(a.ultimoPrecio)}</td>
+                                <td className="num">{f(a.valorizado)}</td>
+                                <td className={`num ${a.gananciaDinero >= 0 ? "pos" : "neg"}`}>{f(a.gananciaDinero)} ({a.gananciaPorcentaje >= 0 ? "+" : ""}{String(Math.round(a.gananciaPorcentaje * 10) / 10).replace(".", ",")}%)</td>
+                                <td className={`num ${a.variacionDiaria >= 0 ? "pos" : "neg"}`}>{a.variacionDiaria >= 0 ? "+" : ""}{String(Math.round(a.variacionDiaria * 10) / 10).replace(".", ",")}%</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <p className="hint" style={{ margin: "10px 0 0" }}>
+                    Actualizado a las {new Date(iol.cartera.actualizado).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })} · Esto no se suma a lo que cargaste en Ahorro · El evolutivo está en Gráficos → Cartera
+                  </p>
+                </>
               )}
             </section>
 
