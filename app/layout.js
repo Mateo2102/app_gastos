@@ -9,6 +9,8 @@ export const metadata = {
   description: "Tablero de control de gastos personal",
 };
 
+export const viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
+
 export default function RootLayout({ children }) {
   return (
     <html lang="es" className={`${sans.variable} ${mono.variable}`}>
