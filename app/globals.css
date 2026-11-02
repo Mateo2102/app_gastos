@@ -1169,3 +1169,14 @@ button:active:not(:disabled) {
 .btn-salir:hover { background: var(--surface-alt); color: var(--text); }
 .btn-salir .icon { margin: 0; }
 .mobilebar { gap: 8px; }
+
+/* ---------- Hasta cobrar (capacidad de gasto) ---------- */
+.cobro-card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 18px 20px; }
+.cobro-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.cobro-head h2 { margin: 0; font-size: 16px; }
+.cobro-valor { font-family: var(--mono); font-size: 32px; font-weight: 700; margin: 8px 0 2px; letter-spacing: -0.02em; }
+.cobro-valor small { font-size: 14px; font-weight: 500; color: var(--text-muted); font-family: inherit; letter-spacing: 0; }
+.cobro-deficit { color: var(--danger); font-weight: 600; margin: 10px 0 4px; }
+.cobro-detalle { display: flex; gap: 8px 22px; flex-wrap: wrap; font-size: 13.5px; margin-top: 10px; color: var(--text-muted); }
+.cobro-detalle strong { color: var(--text); font-family: var(--mono); }
+.cobro-nota { font-size: 12px; margin: 10px 0 0; }

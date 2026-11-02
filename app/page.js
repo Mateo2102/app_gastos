@@ -114,6 +114,11 @@ const ESTADO_FIJO = {
   terminado: ["Terminado", "badge-neutral"], programado: ["Programado", "badge-info"]
 };
 
+function fechaCortaISO(iso) {
+  const [y, m, d] = String(iso).split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("es-AR", { weekday: "short", day: "2-digit", month: "2-digit" }).replace(/-/g, "/");
+}
+
 function iniciales(nombre) {
   return String(nombre || "?").trim().slice(0, 2).toUpperCase();
 }
@@ -299,6 +304,7 @@ export default function Home() {
   // período" — sirve para que el balance del header siempre refleje el mes real siguiente al
   // que ya se paga (no el período que se esté mirando en la tabla de proyección).
   const [mesesBase, setMesesBase] = useState([]);
+  const [capacidad, setCapacidad] = useState(null); // cuánto se puede gastar hasta el próximo cobro
   const [porCuenta, setPorCuenta] = useState(null);
   const [gastosFijos, setGastosFijos] = useState([]);
   const [historico, setHistorico] = useState(null);
@@ -375,6 +381,7 @@ export default function Home() {
     if (!opts.onlyBase) setMeses(payload.meses || []);
     if (!opts.anchored) setMesesBase(payload.meses || []);
     if (payload.porCuenta) setPorCuenta(payload.porCuenta);
+    if (payload.capacidad !== undefined) setCapacidad(payload.capacidad);
     if (payload.config) {
       setCfgPiso(payload.config.piso || "");
       setSueldoSchedule(payload.config.sueldoSchedule || []);
@@ -1354,6 +1361,28 @@ export default function Home() {
                           </div>
                         </div>
                       </section>
+
+                      {capacidad && (
+                        <section className="cobro-card" aria-labelledby="cobro-titulo">
+                          <div className="cobro-head">
+                            <h2 id="cobro-titulo">Hasta cobrar</h2>
+                            <span className="muted">{capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"} · cobrás el {fechaCortaISO(capacidad.hasta)}</span>
+                          </div>
+                          {capacidad.enDeficit ? (
+                            <p className="cobro-deficit">Con lo comprometido para {labelTramo(capacidad.mesKey)} no llegás a cubrir el piso de {fmt(capacidad.piso)}: faltan {fmt(-capacidad.libre)}.</p>
+                          ) : (
+                            <>
+                              <div className="cobro-valor">{fmt(capacidad.porDia)}<small> por día</small></div>
+                              <p className="muted">Te quedan {fmt(capacidad.libre)} libres hasta cobrar, además del piso de {fmt(capacidad.piso)}.</p>
+                            </>
+                          )}
+                          <div className="cobro-detalle">
+                            <span>Ingresos de {labelTramo(capacidad.mesKey)} <strong>{fmt(capacidad.ingresos)}</strong></span>
+                            <span>Comprometido <strong>{fmt(capacidad.comprometido)}</strong> ({Math.round((capacidad.comprometido / (capacidad.ingresos || 1)) * 100)}%)</span>
+                          </div>
+                          <p className="cobro-nota muted">Es una estimación con lo cargado en la planilla: no conoce el saldo de tu cuenta. El sueldo del último día hábil de cada mes paga el mes siguiente.</p>
+                        </section>
+                      )}
 
                       <div className="quick-actions" role="group" aria-label="Acciones rápidas">
                         <button onClick={() => abrirCargar("Gasto variable")}>
