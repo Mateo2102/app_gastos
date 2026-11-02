@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
-import { mesPagoCredito, mesCierreDesdeFechaCierre, shiftMonthKey } from "@/lib/closing";
+import { mesPagoCredito, mesCierreDesdeFechaCierre, shiftMonthKey, fechaCierreDia, fechaAplicacion } from "@/lib/closing";
 
 const MESES_NOMBRE = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -10,11 +10,11 @@ const MESES_NOMBRE = [
 ];
 
 const TABS = [
-  { id: "inicio", label: "Inicio" },
-  { id: "proyeccion", label: "Proyección" },
-  { id: "gastos", label: "Gastos" },
-  { id: "tarjetas", label: "Tarjetas" },
-  { id: "ahorro", label: "Ahorro" }
+  { id: "inicio", label: "Inicio", icon: "home", sub: "" },
+  { id: "gastos", label: "Gastos", icon: "receipt", sub: "Qué pasó con la plata, mes a mes." },
+  { id: "tarjetas", label: "Tarjetas", icon: "card", sub: "Cierres, cuotas y gastos fijos de cada tarjeta." },
+  { id: "proyeccion", label: "Proyección", icon: "chart", sub: "Cómo vas a estar los próximos meses." },
+  { id: "ahorro", label: "Ahorro", icon: "wallet", sub: "Tu ahorro acumulado, en pesos y dólares." }
 ];
 
 // Qué se carga en el formulario: define la "clase" de fila en la planilla (columna A).
@@ -107,6 +107,22 @@ function shiftMes(month, year, delta) {
   return { month: ((total % 12) + 12) % 12, year: Math.floor(total / 12) };
 }
 
+// Próximo cierre de una tarjeta con día fijo: cuántos días faltan desde hoy.
+function proximoCierre(dia, hoy) {
+  const h = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  let c = fechaCierreDia(h.getFullYear(), h.getMonth(), dia);
+  if (c < h) c = fechaCierreDia(h.getFullYear(), h.getMonth() + 1, dia);
+  return { dias: Math.round((c - h) / 86400000), fecha: c };
+}
+
+// Color de una variación según LO QUE cambia: en algo positivo (ingreso, ahorro) subir es bueno y bajar
+// es malo; en algo negativo (gasto, deuda) subir es malo y bajar es bueno.
+function claseVariacion(delta, tipo) {
+  if (!delta) return "muted";
+  const bueno = tipo === "gasto" ? delta < 0 : delta > 0;
+  return bueno ? "var-bien" : "var-mal";
+}
+
 function agruparPor(lista, keyFn) {
   if (!lista) return [];
   const grupos = new Map();
@@ -130,9 +146,9 @@ async function fetchJSON(url, opts) {
 }
 
 // Control segmentado: una fila de opciones excluyentes (reemplaza selects de pocas opciones).
-function Segmented({ value, onChange, options }) {
+function Segmented({ value, onChange, options, className = "" }) {
   return (
-    <div className="segmented">
+    <div className={`segmented ${className}`}>
       {options.map((o) => {
         const v = typeof o === "string" ? o : o.value;
         const label = typeof o === "string" ? o : o.label;
@@ -156,7 +172,14 @@ const ICONOS = {
   info: <><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></>,
   alert: <><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></>,
   card: <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></>,
-  bank: <path d="M3 21h18M5 21V10M9 21V10M15 21V10M19 21V10M3 10l9-6 9 6" />
+  bank: <path d="M3 21h18M5 21V10M9 21V10M15 21V10M19 21V10M3 10l9-6 9 6" />,
+  home: <path d="M3 11 12 3l9 8M5 10v10h14V10M10 20v-6h4v6" />,
+  receipt: <path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6" />,
+  chart: <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />,
+  wallet: <><path d="M4 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11" /><circle cx="16" cy="13.5" r="1" /></>,
+  "arrow-down-left": <path d="M17 7 7 17M17 17H7V7" />,
+  "arrow-up-right": <path d="M7 17 17 7M7 7h10v10" />,
+  calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>
 };
 
 function Icon({ name, size = 18 }) {
@@ -212,7 +235,7 @@ function calcAlertas(meses) {
       lista.push({ nivel: "ok", mes: m.label, texto: `Sube el ahorro proyectado ${fmt(m.ahorroProyectado - prev.ahorroProyectado)} respecto de ${prev.label}.` });
     }
     if (m.aguinaldo > 0) {
-      lista.push({ nivel: "info", mes: m.label, texto: `Ingresa aguinaldo (${fmt(m.aguinaldo)}).` });
+      lista.push({ nivel: "ok", mes: m.label, texto: `Ingresa aguinaldo (${fmt(m.aguinaldo)}).` });
     }
   });
   return lista;
@@ -225,7 +248,15 @@ export default function Home() {
   // el 01/10 pasa a verse noviembre).
   const mesObjetivo = shiftMes(hoy.getMonth(), hoy.getFullYear(), 1);
 
-  const [tab, setTab] = useState("inicio");
+  const [tab, setTabRaw] = useState("inicio");
+
+  // Cambiar de sección: queda en la URL (#gastos), vuelve arriba y mueve el foco al contenido.
+  function setTab(id) {
+    setTabRaw(id);
+    if (window.location.hash.replace("#", "") !== id) window.history.pushState(null, "", "#" + id);
+    window.scrollTo(0, 0);
+    requestAnimationFrame(() => document.getElementById("contenido")?.focus({ preventScroll: true }));
+  }
   // Sub-vistas de cada pestaña agrupada.
   const [proyVista, setProyVista] = useState("proyeccion"); // proyeccion | sueldo
   const [tarjetasVista, setTarjetasVista] = useState("tarjeta"); // tarjeta | cuotas
@@ -381,7 +412,13 @@ export default function Home() {
   // La pestaña "Gastos" se carga recién al abrirla, para no gastar lecturas de Sheets de más.
   function abrirTab(id) {
     setTab(id);
-    if (id === "gastos" && gastosHist === null) cargarGastosMes();
+  }
+
+  function abrirCargar(clase) {
+    if (clase) setGForm((f) => ({ ...f, gasto: clase, categoria: "" }));
+    setAddStatus("");
+    setErroresForm({});
+    setCargarAbierto(true);
   }
 
   // Cerrar Cargar: si hay datos escritos sin guardar, pide confirmación para no perderlos.
@@ -410,10 +447,22 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Al abrir la app (o con Atrás/Adelante) la sección sale de la URL.
+  useEffect(() => {
+    const leer = () => {
+      const id = window.location.hash.replace("#", "");
+      if (TABS.some((t) => t.id === id)) setTabRaw(id);
+    };
+    leer();
+    window.addEventListener("popstate", leer);
+    return () => window.removeEventListener("popstate", leer);
+  }, []);
+
   // "Cuotas del mes" se trae recién al abrir Tarjetas (una lectura menos en la carga inicial).
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- carga bajo demanda vía fetch
     if (tab === "tarjetas" && cuotasMes === null) cargarCuotasMes().catch((e) => setLoadError(mensajeDeError(e)));
+    if (tab === "gastos" && gastosHist === null) cargarGastosMes().catch((e) => setLoadError(mensajeDeError(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -1082,38 +1131,67 @@ export default function Home() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="topbar-inner">
-          <div className="brand">
-            <span className="brand-icon">$</span>
-            <h1>Tablero de Gastos</h1>
-            <span className="dolar-chip">
-              {dolarBlue ? <>Dólar blue <b>{fmt(dolarBlue)}</b></> : "Dólar blue no disponible"}
-            </span>
+      <a href="#contenido" className="skip-link" onClick={(e) => { e.preventDefault(); document.getElementById("contenido")?.focus(); }}>Saltar al contenido</a>
+
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <span className="brand-icon">$</span>
+          <div className="sidebar-brand-text">
+            <strong>Mis gastos</strong>
+            <small>Tablero personal</small>
           </div>
-          <button className={`btn-cargar ${cargarAbierto ? "active" : ""}`} onClick={() => { setAddStatus(""); setCargarAbierto(true); }}>
-            <Icon name="plus" size={16} /> Cargar
-          </button>
         </div>
-        <nav className="tabnav">
+
+        <button className={`btn-cargar btn-cargar-side ${cargarAbierto ? "active" : ""}`} onClick={() => abrirCargar()}>
+          <Icon name="plus" size={18} /> Cargar
+        </button>
+
+        <nav className="sidenav" aria-label="Secciones">
           {TABS.map((t) => (
             <button
               key={t.id}
-              className={`tabbtn ${tab === t.id ? "active" : ""}`}
+              className={`sidelink ${tab === t.id ? "active" : ""}`}
+              aria-current={tab === t.id ? "page" : undefined}
               onClick={() => abrirTab(t.id)}
             >
-              {t.label}
+              <Icon name={t.icon} size={20} />
+              <span>{t.label}</span>
             </button>
           ))}
         </nav>
-      </header>
 
-      <main className="content">
+        <div className="sidebar-foot">
+          <span className="dolar-chip">
+            {dolarBlue ? <>Dólar blue <b>{fmt(dolarBlue)}</b></> : "Dólar blue no disponible"}
+          </span>
+        </div>
+      </aside>
+
+      <div className="shell-main">
+        <header className="mobilebar">
+          <div className="brand">
+            <span className="brand-icon">$</span>
+            <strong>Mis gastos</strong>
+          </div>
+          <span className="dolar-chip">
+            {dolarBlue ? <>Dólar blue <b>{fmt(dolarBlue)}</b></> : "Dólar blue no disponible"}
+          </span>
+        </header>
+
+      <main className="content" id="contenido" tabIndex={-1}>
         {loadError && (
           <div className="load-error" role="alert">
             <Icon name="alert" size={18} />
             <span>{loadError}</span>
             <button className="btn-secondary" onClick={cargarInicial} disabled={cargandoInicial}>{cargandoInicial ? "Reintentando..." : "Reintentar"}</button>
+          </div>
+        )}
+        {tab !== "inicio" && (
+          <div className="page-head">
+            <div>
+              <h1 className="page-title">{TABS.find((t) => t.id === tab)?.label}</h1>
+              <p className="page-sub">{TABS.find((t) => t.id === tab)?.sub}</p>
+            </div>
           </div>
         )}
         {tab === "inicio" && (
@@ -1125,14 +1203,23 @@ export default function Home() {
               const est = estadoMes(mo);
               const base = Math.max(mo.ingresos, mo.gastos, 1);
               const ancho = (v) => `${Math.max(0, Math.min(100, (v / base) * 100))}%`;
-              const totalCuentas = cuentasInicio.reduce((acc, [, v]) => acc + v, 0);
+              // Solo tarjetas de crédito: transferencias y efectivo cuentan en los gastos del mes, pero no son una tarjeta.
+              const tarjetasInicio = cuentasInicio.filter(([nombre]) => porTarjeta.some((g) => g.medio === nombre));
+              const totalTarjetas = tarjetasInicio.reduce((acc, [, v]) => acc + v, 0);
               const mirar = [...alertasInicio.filter((a) => a.nivel !== "info"), ...alertasInicio.filter((a) => a.nivel === "info")].slice(0, 4);
               const ultimo = Math.max(mesesBase.length - 1, 0);
+              const textoEstado = {
+                deficit: `Los gastos superan a los ingresos por ${fmt(-mo.margen)}.`,
+                ajustado: `No alcanza para el piso de ${fmt(mo.pisoConfigurado)}: el piso se ajusta a ${fmt(mo.piso)}.`,
+                ok: `Es lo que queda por encima de tu piso de ${fmt(mo.pisoConfigurado)}.`,
+                justo: `Queda exactamente tu piso de ${fmt(mo.pisoConfigurado)}.`
+              }[est.id];
+              const recientes = historico ? [...historico].sort((a, b) => b.row - a.row).slice(0, 7) : null;
               return (
                 <>
                   <div className="page-head">
                     <div>
-                      <h2 className="page-title">{MESES_NOMBRE[mo.month]} {mo.year}</h2>
+                      <h1 className="page-title">{MESES_NOMBRE[mo.month]} {mo.year}</h1>
                       <p className="page-sub">Cómo viene el mes, de un vistazo.</p>
                     </div>
                     <div className="month-nav">
@@ -1142,100 +1229,148 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="kpi-row">
-                    <div className="kpi-card">
-                      <div className="kpi-label">Sueldo</div>
-                      <div className="kpi-value">{fmt(mo.ingresos)}</div>
-                      <div className="kpi-sub">
-                        {mo.aguinaldo > 0 || mo.ingresoExtra > 0
-                          ? [mo.aguinaldo > 0 ? `incl. aguinaldo ${fmt(mo.aguinaldo)}` : "", mo.ingresoExtra > 0 ? `incl. extra ${fmt(mo.ingresoExtra)}` : ""].filter(Boolean).join(" · ")
-                          : "Lo que entra este mes"}
-                      </div>
-                    </div>
-                    <button className="kpi-card kpi-link" onClick={() => { setGastosMesFiltro({ month: mo.month, year: mo.year }); setGastosVista("detalle"); abrirTab("gastos"); }}>
-                      <div className="kpi-label">Gastos</div>
-                      <div className="kpi-value">{fmt(mo.gastos)}</div>
-                      <div className="kpi-sub">Fijos {fmt(mo.gastoFijo)} · Cuotas {fmt(mo.gastoVariable)}</div>
-                    </button>
-                    <div className="kpi-card">
-                      <div className="kpi-label">Libre</div>
-                      <div className="kpi-value">{fmt(mo.piso)}</div>
-                      <div className="kpi-sub">
-                        {mo.piso < mo.pisoConfigurado ? `Ajustado (piso config. ${fmt(mo.pisoConfigurado)})` : "Tu piso, siempre disponible"}
-                      </div>
-                    </div>
-                    <div className={`kpi-card kpi-accent estado-borde-${est.id}`}>
-                      <div className="kpi-label">Ahorro proyectado</div>
-                      <div className="kpi-value">{fmt(mo.ahorroProyectado)}</div>
-                      <div className="kpi-sub"><span className={`estado-chip estado-${est.id}`}>{est.texto}</span></div>
-                    </div>
-                  </div>
+                  <div className="home-grid">
+                    <div className="home-main">
+                      <section className={`hero-card hero-${est.id}`} aria-labelledby="hero-titulo">
+                        <div className="hero-top">
+                          <span className="hero-label" id="hero-titulo">Ahorro proyectado</span>
+                          <span className="estado-chip">{est.texto}</span>
+                        </div>
+                        <div className="hero-value">{fmt(mo.ahorroProyectado)}</div>
+                        <p className="hero-sub">{textoEstado}</p>
 
-                  <section className="card">
-                    <div className="card-head-row">
-                      <h2>Adónde va la plata</h2>
-                      <span className="muted">Ingresos {fmt(mo.ingresos)}</span>
-                    </div>
-                    <div className="flow-bar">
-                      <span style={{ width: ancho(Math.min(mo.gastos, base)), background: PAL.gasto }}></span>
-                      <span style={{ width: ancho(mo.piso), background: PAL.libre }}></span>
-                      <span style={{ width: ancho(mo.ahorroProyectado), background: "var(--green)" }}></span>
-                    </div>
-                    <div className="flow-legend">
-                      <span><i style={{ background: PAL.gasto }}></i>Gastos {fmt(mo.gastos)}</span>
-                      <span><i style={{ background: PAL.libre }}></i>Libre {fmt(mo.piso)}</span>
-                      <span><i style={{ background: "var(--green)" }}></i>Ahorro {fmt(mo.ahorroProyectado)}</span>
-                    </div>
-                  </section>
+                        <div className="flow-bar on-hero" role="img" aria-label={`De ${fmt(mo.ingresos)} de ingresos: gastos ${fmt(mo.gastos)}, piso ${fmt(mo.piso)}, ahorro ${fmt(mo.ahorroProyectado)}`}>
+                          <span className="f-gasto" style={{ width: ancho(Math.min(mo.gastos, base)) }}></span>
+                          <span className="f-libre" style={{ width: ancho(mo.piso) }}></span>
+                          <span className="f-ahorro" style={{ width: ancho(mo.ahorroProyectado) }}></span>
+                        </div>
+                        <div className="flow-legend on-hero">
+                          <span><i className="f-gasto"></i>Gastos</span>
+                          <span><i className="f-libre"></i>Piso</span>
+                          <span><i className="f-ahorro"></i>Ahorro</span>
+                        </div>
 
-                  <section className="card">
-                    <div className="card-head-row">
-                      <h2>Gastos por tarjeta</h2>
-                      <button className="section-link" onClick={() => setTab("tarjetas")}>Ver tarjetas →</button>
-                    </div>
-                    {cuentasInicio.length === 0 ? (
-                      <div className="empty-hint">No hay gastos por cuenta este mes.</div>
-                    ) : (
-                      <>
-                        {cuentasInicio.map(([nombre, monto]) => {
-                          const esTarjeta = porTarjeta.some((g) => g.medio === nombre);
+                        <div className="hero-stats">
+                          <div>
+                            <span className="hero-stat-label">Ingresos</span>
+                            <strong>{fmt(mo.ingresos)}</strong>
+                            <small>
+                              {mo.aguinaldo > 0 || mo.ingresoExtra > 0
+                                ? [mo.aguinaldo > 0 ? `aguinaldo ${fmt(mo.aguinaldo)}` : "", mo.ingresoExtra > 0 ? `extra ${fmt(mo.ingresoExtra)}` : ""].filter(Boolean).join(" · ")
+                                : "Lo que entra"}
+                            </small>
+                          </div>
+                          <button className="hero-stat-link" onClick={() => { setGastosMesFiltro({ month: mo.month, year: mo.year }); setGastosVista("detalle"); abrirTab("gastos"); }}>
+                            <span className="hero-stat-label">Gastos</span>
+                            <strong>{fmt(mo.gastos)}</strong>
+                            <small>Fijos {fmt(mo.gastoFijo)} · Cuotas {fmt(mo.gastoVariable)}</small>
+                          </button>
+                          <div>
+                            <span className="hero-stat-label">Piso</span>
+                            <strong>{fmt(mo.piso)}</strong>
+                            <small>{mo.piso < mo.pisoConfigurado ? `Ajustado (config. ${fmt(mo.pisoConfigurado)})` : "Siempre disponible"}</small>
+                          </div>
+                        </div>
+                      </section>
+
+                      <div className="quick-actions" role="group" aria-label="Acciones rápidas">
+                        <button onClick={() => abrirCargar("Gasto variable")}>
+                          <span className="qa-icon qa-out"><Icon name="arrow-up-right" size={20} /></span>Cargar gasto
+                        </button>
+                        <button onClick={() => abrirCargar("Ingreso extra")}>
+                          <span className="qa-icon qa-in"><Icon name="arrow-down-left" size={20} /></span>Cargar ingreso
+                        </button>
+                        <button onClick={() => abrirTab("tarjetas")}>
+                          <span className="qa-icon"><Icon name="card" size={20} /></span>Tarjetas
+                        </button>
+                        <button onClick={() => abrirTab("proyeccion")}>
+                          <span className="qa-icon"><Icon name="chart" size={20} /></span>Proyección
+                        </button>
+                      </div>
+
+                      <section className="card">
+                        <div className="card-head-row">
+                          <h2>Últimos movimientos</h2>
+                          <button className="section-link" onClick={() => abrirTab("gastos")}>Ver gastos →</button>
+                        </div>
+                        {recientes === null ? (
+                          <Skeleton />
+                        ) : recientes.length === 0 ? (
+                          <div className="empty-hint">Todavía no cargaste movimientos. Tocá “Cargar” para empezar.</div>
+                        ) : recientes.map((h) => {
+                          const esIngreso = h.gasto === "Ingreso extra";
+                          const esFijo = h.gasto === "Gasto fijo";
                           return (
-                            <button
-                              key={nombre}
-                              className={`cuenta-row ${esTarjeta ? "" : "cuenta-row-plana"}`}
-                              onClick={() => { if (esTarjeta) irATarjeta(nombre); }}
-                            >
-                              <span className="tarjeta-avatar">{iniciales(nombre)}</span>
-                              <span className="cuenta-main">
-                                <span className="cuenta-name">{nombre}</span>
-                                <span className="cuenta-bar"><span style={{ width: `${totalCuentas ? (monto / totalCuentas) * 100 : 0}%` }}></span></span>
+                            <div className="tx-row" key={h.row}>
+                              <span className={`tx-icon ${esIngreso ? "in" : "out"}`}>
+                                <Icon name={esIngreso ? "arrow-down-left" : (esFijo ? "calendar" : "arrow-up-right")} size={18} />
                               </span>
-                              <span className="cuenta-monto">
-                                {fmt(monto)}
-                                <span className="cuenta-pct">{totalCuentas ? Math.round((monto / totalCuentas) * 100) : 0}%</span>
-                              </span>
-                            </button>
+                              <div className="tx-main">
+                                <span className="tx-title">{h.desc}</span>
+                                <span className="tx-sub">{[h.fecha, h.categoria, h.medio].filter(Boolean).join(" · ")}</span>
+                              </div>
+                              <div className="tx-side">
+                                <span className={`tx-monto ${esIngreso ? "in" : "out"}`}>{esIngreso ? "+" : "−"} {celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</span>
+                                <span className="tx-tag">{esIngreso ? "Ingreso" : (esFijo ? "Fijo mensual" : (Number(h.cuotas) > 1 ? `${h.cuotas} cuotas` : "Un pago"))}</span>
+                              </div>
+                            </div>
                           );
                         })}
-                        <div className="cuenta-total"><span>Total</span><strong>{fmt(totalCuentas)}</strong></div>
-                      </>
-                    )}
-                  </section>
+                      </section>
+                    </div>
 
-                  {mirar.length > 0 && (
-                    <section className="card">
-                      <div className="card-head-row">
-                        <h2>Para tener en cuenta</h2>
-                        <button className="section-link" onClick={() => { setProyVista("proyeccion"); setTab("proyeccion"); }}>Ver proyección →</button>
-                      </div>
-                      {mirar.map((a, i) => (
-                        <div className={`alerta-row alerta-${a.nivel}`} key={i}>
-                          <span className="alerta-icon"><Icon name={a.nivel === "ok" ? "check-circle" : (a.nivel === "info" ? "info" : "alert")} size={16} /></span>
-                          <div><strong>{a.mes}</strong> — {a.texto}</div>
+                    <aside className="home-aside">
+                      <section className="card">
+                        <div className="card-head-row">
+                          <h2>Tarjetas de {MESES_NOMBRE[mo.month].toLowerCase()}</h2>
+                          <button className="section-link" onClick={() => abrirTab("tarjetas")}>Ver todas →</button>
                         </div>
-                      ))}
-                    </section>
-                  )}
+                        {historico === null ? (
+                          <Skeleton />
+                        ) : tarjetasInicio.length === 0 ? (
+                          <div className="empty-hint">No hay gastos con tarjeta este mes.</div>
+                        ) : (
+                          <>
+                            <div className="mini-cards">
+                              {tarjetasInicio.map(([nombre, monto]) => {
+                                const bancoCierre = Object.keys(cierreDias).find((b) => nombre.includes(b));
+                                const cierre = bancoCierre ? proximoCierre(cierreDias[bancoCierre], hoy) : null;
+                                const textoCierre = cierre
+                                  ? (cierre.dias === 0 ? "Cierra hoy" : cierre.dias === 1 ? "Cierra mañana" : `Cierra en ${cierre.dias} días`)
+                                  : "Sin día de cierre";
+                                return (
+                                  <button key={nombre} className={`mini-card ${cardTheme(nombre)}`} onClick={() => irATarjeta(nombre)}>
+                                    <span className="mini-card-name">{nombre}</span>
+                                    <span className="mini-card-amount">{fmt(monto)}</span>
+                                    <span className="mini-card-foot">
+                                      <span>{totalTarjetas ? Math.round((monto / totalTarjetas) * 100) : 0}% de tarjetas</span>
+                                      <span>{textoCierre}</span>
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="cuenta-total"><span>Total en tarjetas</span><strong>{fmt(totalTarjetas)}</strong></div>
+                          </>
+                        )}
+                      </section>
+
+                      {mirar.length > 0 && (
+                        <section className="card">
+                          <div className="card-head-row">
+                            <h2>Para tener en cuenta</h2>
+                            <button className="section-link" onClick={() => { setProyVista("proyeccion"); abrirTab("proyeccion"); }}>Proyección →</button>
+                          </div>
+                          {mirar.map((a, i) => (
+                            <div className={`alerta-row alerta-${a.nivel}`} key={i}>
+                              <span className="alerta-icon"><Icon name={a.nivel === "ok" ? "check-circle" : (a.nivel === "info" ? "info" : "alert")} size={16} /></span>
+                              <div><strong>{a.mes}</strong> — {a.texto}</div>
+                            </div>
+                          ))}
+                        </section>
+                      )}
+                    </aside>
+                  </div>
                 </>
               );
             })()}
@@ -1598,7 +1733,7 @@ export default function Home() {
                         <div className="hero-kpi-value">{fmt(gastosKpis.total)}</div>
                         <div className="stat-tile-sub">
                           {gastosKpis.prev === null ? `${gastosKpis.cantidad} gastos` : (
-                            <span className={gastosKpis.total > gastosKpis.prev ? "kpi-up" : "kpi-down"}>
+                            <span className={claseVariacion(gastosKpis.total - gastosKpis.prev, "gasto")}>
                               {gastosKpis.total > gastosKpis.prev ? "↑" : "↓"} {fmt(Math.abs(gastosKpis.total - gastosKpis.prev))}
                               {gastosKpis.prev ? ` (${gastosKpis.total > gastosKpis.prev ? "+" : "-"}${Math.round(Math.abs(gastosKpis.total - gastosKpis.prev) / gastosKpis.prev * 100)}%)` : ""} vs mes anterior
                             </span>
@@ -1648,7 +1783,7 @@ export default function Home() {
                         <span className="rank-pct">{gastosKpis.total ? Math.round((gastosKpis.cur[k] / gastosKpis.total) * 100) : 0}%</span>
                         <span className="comp-delta">
                           {gastosKpis.ant === null ? "" : (
-                            <span className={gastosKpis.cur[k] > gastosKpis.ant[k] ? "kpi-up" : (gastosKpis.cur[k] < gastosKpis.ant[k] ? "kpi-down" : "muted")}>
+                            <span className={claseVariacion(gastosKpis.cur[k] - gastosKpis.ant[k], "gasto")}>
                               {gastosKpis.cur[k] === gastosKpis.ant[k] ? "= igual" : `${gastosKpis.cur[k] > gastosKpis.ant[k] ? "↑" : "↓"} ${fmt(Math.abs(gastosKpis.cur[k] - gastosKpis.ant[k]))}`}
                             </span>
                           )}
@@ -1983,9 +2118,16 @@ export default function Home() {
             )}
             {tarjetasVista === "tarjeta" && (
               <>
-            <section className="card">
-              <div className="card-head">
-                <h2>Fecha de cierre de cada tarjeta</h2>
+            <details className="card cierre-card">
+              <summary className="cierre-summary">
+                <h2>Día de cierre de cada tarjeta</h2>
+                <span className="muted">
+                  {opciones.bancos.filter((b) => !cierreDias[b]).length > 0
+                    ? `${opciones.bancos.filter((b) => !cierreDias[b]).length} sin configurar`
+                    : "Todas configuradas"}
+                </span>
+              </summary>
+              <div className="card-head" style={{ marginTop: 14 }}>
                 <p className="hint" style={{ margin: "4px 0 0" }}>
                   Una compra hecha <strong>antes</strong> del día de cierre se paga con el sueldo del mes siguiente; la hecha
                   <strong> el día del cierre o después</strong> se paga un mes más tarde. Ej.: cierre el 20 → compra del 19/10 en
@@ -2013,7 +2155,7 @@ export default function Home() {
                 );
               })}
               {cierreStatus && <StatusMsg texto={cierreStatus} />}
-            </section>
+            </details>
 
             <div className="bankcards-row">
               {porTarjeta.length === 0 && <div className="empty-hint">Todavía no tenés compras con tarjeta de crédito cargadas.</div>}
@@ -2195,7 +2337,18 @@ export default function Home() {
             const medioTxt = esIngreso ? "" : (esTarjeta ? [gForm.marca, gForm.banco].filter(Boolean).join(" ") : (gForm.formaPago === "Efectivo" ? "Efectivo" : (gForm.banco || gForm.formaPago)));
             if (esCompra && esTarjeta) {
               const ultimo = shiftMonthKey(mesPagoKey, cuotasN - 1);
+              // Con día de cierre configurado: la compra se calcula con una fecha de aplicación (solo para el cálculo).
+              let nota = "";
+              if (!gForm.fechaCierre && cierreDias[gForm.banco]) {
+                const compraD = new Date(Number(fy), Number(fm) - 1, Number(fd));
+                const aplica = fechaAplicacion(compraD, cierreDias[gForm.banco]);
+                const fechaTxt = (x) => `${String(x.getDate()).padStart(2, "0")}/${String(x.getMonth() + 1).padStart(2, "0")}`;
+                nota = aplica.getTime() === compraD.getTime()
+                  ? `${gForm.banco} cierra el día ${cierreDias[gForm.banco]}: la compra todavía entra en este cierre.`
+                  : `${gForm.banco} cerró el día ${cierreDias[gForm.banco]}: la compra queda con fecha ${fechaTxt(compraD)}, pero se aplica el ${fechaTxt(aplica)} (entra en el cierre siguiente).`;
+              }
               impacto = {
+                nota,
                 titulo: cuotasN > 1 ? `${labelTramo(mesPagoKey)} → ${labelTramo(ultimo)}` : labelTramo(mesPagoKey),
                 detalle: cuotasN > 1
                   ? `${cuotasN} cuotas de ${fmtM(montoN)} con ${medioTxt}, una por mes con el sueldo de cada mes. Total ${fmtM(montoN * cuotasN)}${equiv(montoN * cuotasN)}.`
@@ -2228,6 +2381,7 @@ export default function Home() {
                 </div>
 
                 <Segmented
+                  className={esIngreso ? "tipo-ingreso" : "tipo-gasto"}
                   value={esIngreso ? "ingreso" : "gasto"}
                   onChange={(v) => set(v === "ingreso" ? { gasto: "Ingreso extra", categoria: "" } : { gasto: "Gasto variable", categoria: "" })}
                   options={[{ value: "gasto", label: "Gasto" }, { value: "ingreso", label: "Ingreso" }]}
@@ -2312,12 +2466,13 @@ export default function Home() {
                   </>
                 )}
 
-                <div className={`impacto-box ${completo ? "ok" : ""}`} aria-live="polite">
+                <div className={`impacto-box ${completo ? "ok" : ""} ${esIngreso ? "ingreso" : ""}`} aria-live="polite">
                   {completo ? (
                     <>
                       <div className="resumen-label">{esCompra && esTarjeta ? "Se paga con el sueldo de" : "Impacta en"}</div>
                       <div className="impacto-titulo">{impacto.titulo}</div>
                       <div className="resumen-text">{impacto.detalle}</div>
+                      {impacto.nota && <p className="impacto-nota">{impacto.nota}</p>}
                     </>
                   ) : (
                     <>
@@ -2360,6 +2515,24 @@ export default function Home() {
         })()}
 
       </main>
+      </div>
+
+      <nav className="bottomnav" aria-label="Secciones">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            className={`bottomlink ${tab === t.id ? "active" : ""}`}
+            aria-current={tab === t.id ? "page" : undefined}
+            onClick={() => abrirTab(t.id)}
+          >
+            <Icon name={t.icon} size={22} />
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </nav>
+      <button className="fab" onClick={() => abrirCargar()} aria-label="Cargar un gasto o ingreso">
+        <Icon name="plus" size={20} /> Cargar
+      </button>
     </div>
   );
 }
