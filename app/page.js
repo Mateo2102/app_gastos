@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
-import { mesPagoCredito, shiftMonthKey } from "@/lib/closing";
+import { mesPagoCredito, mesCierreDesdeFechaCierre, shiftMonthKey } from "@/lib/closing";
 
 const MESES_NOMBRE = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -25,6 +25,23 @@ const CLASES_CARGA = [
 ];
 
 const FORMA_TARJETA = "Tarjeta de Crédito";
+
+// Categorías que se ofrecen al cargar. El Tipo de la planilla (columna B) se deduce de la categoría.
+const CATEGORIAS_GASTO = [
+  "Supermercado", "Entretenimiento", "Indumentaria y calzado", "Salud y belleza", "Deporte", "Tecnología",
+  "Transporte y apps", "Suscripciones y servicios", "Mascotas", "Seguros", "Préstamos", "Comisiones bancarias"
+];
+const CATEGORIAS_INGRESO = ["Sueldo extra", "Venta", "Reintegro", "Otro"];
+// Nombres anteriores que ya no se ofrecen (las filas viejas se recategorizaron en la planilla).
+const CATEGORIAS_VIEJAS = ["Aplicaciones", "Vehículo", "Servicios", "Suscripciones", "Prestamos", "Ingresos extraordinarios"];
+const TIPO_POR_CATEGORIA = {
+  "Suscripciones y servicios": "Suscripcion", "Seguros": "Seguros", "Préstamos": "Prestamos", "Comisiones bancarias": "Comisiones"
+};
+function tipoDeCategoria(categoria, esFijo) {
+  const tipo = TIPO_POR_CATEGORIA[categoria] || "Compra";
+  // La fórmula de Estado de la planilla trata como "Gasto Fijo" todo lo que no sea Compra/Comisiones.
+  return esFijo && tipo === "Compra" ? "Suscripcion" : tipo;
+}
 
 const fmt = (n) => (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString("es-AR");
 const fmtUSD = (n) =>
@@ -202,6 +219,7 @@ export default function Home() {
     gasto: "Gasto variable", tipo: "", categoria: "", ...pagoInicial, desc: "", fecha: hoyISO, cuotas: 1, moneda: "ARS", monto: ""
   });
   const [addStatus, setAddStatus] = useState("");
+  const [cargarAbierto, setCargarAbierto] = useState(false);
 
   const [histDesde, setHistDesde] = useState("");
   const [histHasta, setHistHasta] = useState("");
@@ -220,7 +238,9 @@ export default function Home() {
   const [histCat, setHistCat] = useState("");
 
   // Navegador de meses independiente para el detalle de una tarjeta puntual (estilo Mercado Pago).
-  const [tarjetaMesFiltro, setTarjetaMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
+  const mesActual = { month: hoy.getMonth(), year: hoy.getFullYear() };
+  const [tarjetaMesFiltro, setTarjetaMesFiltro] = useState(mesActual);
+  const [tarjetaSubtab, setTarjetaSubtab] = useState("consumos"); // consumos | fijos
   const [tarjetaMesCuotas, setTarjetaMesCuotas] = useState(null);
 
   const canvasRef = useRef(null);
@@ -308,6 +328,13 @@ export default function Home() {
     setTab(id);
     if (id === "gastos" && gastosHist === null) cargarGastosMes();
   }
+
+  useEffect(() => {
+    if (!cargarAbierto) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setCargarAbierto(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cargarAbierto]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial de datos vía fetch
@@ -462,9 +489,11 @@ export default function Home() {
       // Un ingreso no tiene medio de pago y un fijo no tiene cuotas ni fecha de cierre.
       const payload = {
         ...gForm,
+        tipo: tipoDeCategoria(gForm.categoria, gForm.gasto === "Gasto fijo"),
         cuotas: esCompra ? gForm.cuotas : 1,
         fechaCierre: esCompra ? gForm.fechaCierre : "",
-        ...(esIngreso ? { formaPago: "", banco: "", marca: "", categoria: "" } : {})
+        ...(esIngreso ? { formaPago: "", banco: "", marca: "" } : {}),
+        ...(gForm.formaPago === "Efectivo" ? { banco: "", marca: "" } : {})
       };
       const res = await fetchJSON("/api/gastos", {
         method: "POST",
@@ -557,6 +586,10 @@ export default function Home() {
   const tarjetaMesCuotasItems = tarjetaMesItems.filter((c) => c.cuota !== "Fijo");
   const tarjetaMesFijosItems = tarjetaMesItems.filter((c) => c.cuota === "Fijo");
   const tarjetaMesTotal = tarjetaMesItems.reduce((acc, c) => acc + (Number(c.montoARS) || 0), 0);
+  const tarjetaConsumosTotal = tarjetaMesCuotasItems.reduce((acc, c) => acc + (Number(c.montoARS) || 0), 0);
+  const tarjetaFijosTotal = tarjetaMesFijosItems.reduce((acc, c) => acc + (Number(c.montoARS) || 0), 0);
+  const tarjetaItemsVista = tarjetaSubtab === "consumos" ? tarjetaMesCuotasItems : tarjetaMesFijosItems;
+  const tarjetaEnMesActual = tarjetaMesFiltro.month === mesActual.month && tarjetaMesFiltro.year === mesActual.year;
   const tarjetaMesTotalUSD = tarjetaMesItems.reduce((acc, c) => acc + (Number(c.montoUSD) || 0), 0);
 
   // Total del mes navegado para CADA tarjeta (mismo criterio que "Total del mes"), para que el
@@ -882,6 +915,11 @@ export default function Home() {
     });
   }, [tenencia, tab]);
 
+  function irMesActualTarjeta() {
+    setTarjetaMesFiltro(mesActual);
+    cargarTarjetaMes(mesActual.month, mesActual.year);
+  }
+
   function irMesTarjeta(delta) {
     const nuevo = shiftMes(tarjetaMesFiltro.month, tarjetaMesFiltro.year, delta);
     setTarjetaMesFiltro(nuevo);
@@ -952,7 +990,7 @@ export default function Home() {
               {dolarBlue ? <>Dólar blue <b>{fmt(dolarBlue)}</b></> : "Dólar blue no disponible"}
             </span>
           </div>
-          <button className={`btn-cargar ${tab === "cargar" ? "active" : ""}`} onClick={() => abrirTab("cargar")}>
+          <button className={`btn-cargar ${cargarAbierto ? "active" : ""}`} onClick={() => { setAddStatus(""); setCargarAbierto(true); }}>
             ＋ Cargar
           </button>
         </div>
@@ -1903,66 +1941,69 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="subsection-title">Cuotas por mes</div>
                   <div className="month-nav" style={{ marginBottom: 14 }}>
                     <button className="btn-icon" onClick={() => irMesTarjeta(-1)}>‹</button>
                     <span className="month-nav-label">{MESES_NOMBRE[tarjetaMesFiltro.month]} {tarjetaMesFiltro.year}</span>
                     <button className="btn-icon" onClick={() => irMesTarjeta(1)}>›</button>
+                    {!tarjetaEnMesActual && <button className="btn-ghost" onClick={irMesActualTarjeta}>Mes actual</button>}
                   </div>
+
+                  <Segmented
+                    value={tarjetaSubtab}
+                    onChange={setTarjetaSubtab}
+                    options={[
+                      { value: "consumos", label: `Consumos · ${tarjetaMesCuotasItems.length} · ${fmt(tarjetaConsumosTotal)}` },
+                      { value: "fijos", label: `Gastos fijos · ${tarjetaMesFijosItems.length} · ${fmt(tarjetaFijosTotal)}` }
+                    ]}
+                  />
 
                   {tarjetaMesCuotas === null ? (
                     <div className="empty-hint">Cargando...</div>
-                  ) : tarjetaMesItems.length === 0 ? (
-                    <div className="empty-hint">Esta tarjeta no tiene gastos en ese mes.</div>
+                  ) : tarjetaItemsVista.length === 0 ? (
+                    <div className="empty-hint">
+                      {tarjetaSubtab === "consumos" ? "Esta tarjeta no tiene consumos en ese mes." : "Esta tarjeta no tiene gastos fijos."}
+                    </div>
                   ) : (
-                    <>
-                      {tarjetaMesCuotasItems.length > 0 && (
-                        <div className="table-scroll">
-                          <table>
-                            <thead>
-                              <tr><th>Compra</th><th className="num">Monto</th><th>Cuota</th></tr>
-                            </thead>
-                            <tbody>
-                              {tarjetaMesCuotasItems.map((c, i) => (
-                                <tr key={i}>
-                                  <td className="strong">{c.desc}</td>
-                                  <td className="num">{celdaEquivalencia(c.moneda, c.montoARS, c.montoUSD)}</td>
-                                  <td><span className="badge badge-info">Cuota {c.cuota}</span></td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {tarjetaMesFijosItems.length > 0 && (
-                        <>
-                          <div className="subsection-title">Gastos fijos · se cobran todos los meses, sin cuotas</div>
-                          <div className="table-scroll">
-                            <table>
-                              <tbody>
-                                {tarjetaMesFijosItems.map((c, i) => (
-                                  <tr key={i}>
-                                    <td className="strong">{c.desc}</td>
-                                    <td className="num">{celdaEquivalencia(c.moneda, c.montoARS, c.montoUSD)}</td>
-                                    <td><span className="badge badge-fijo">Fijo mensual</span></td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </>
-                      )}
-
-                      <div className="cuenta-total"><span>Total del mes</span><strong>{fmt(tarjetaMesTotal)}</strong></div>
-                    </>
+                    <div className="table-scroll">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>{tarjetaSubtab === "consumos" ? "Compra" : "Gasto fijo"}</th>
+                            <th className="num">Monto</th>
+                            <th>{tarjetaSubtab === "consumos" ? "Pago" : "Frecuencia"}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tarjetaItemsVista.map((c, i) => (
+                            <tr key={i}>
+                              <td className="strong">{c.desc}</td>
+                              <td className="num">{celdaEquivalencia(c.moneda, c.montoARS, c.montoUSD)}</td>
+                              <td>
+                                {tarjetaSubtab === "fijos"
+                                  ? <span className="badge badge-fijo">Fijo mensual</span>
+                                  : <span className="badge badge-info">{c.cuota === "1 de 1" ? "Un pago" : `Cuota ${c.cuota}`}</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
+
+                  <div className="cuenta-total">
+                    <span>{tarjetaSubtab === "consumos" ? "Total de consumos" : "Total de gastos fijos"}</span>
+                    <strong>{fmt(tarjetaSubtab === "consumos" ? tarjetaConsumosTotal : tarjetaFijosTotal)}</strong>
+                  </div>
+                  <div className="cuenta-total">
+                    <span>Total del mes de la tarjeta</span>
+                    <strong>{fmt(tarjetaMesTotal)}</strong>
+                  </div>
                 </section>
 
-                <section className="card">
-                  <div className="subsection-title">
-                    Historial completo · {grupoActivo.gastos.length} gastos · total histórico {fmt(grupoActivo.totalARS)}
-                  </div>
+                <details className="card historial-details">
+                  <summary className="subsection-title" style={{ cursor: "pointer", margin: 0 }}>
+                    Ver historial completo · {grupoActivo.gastos.length} gastos · total histórico {fmt(grupoActivo.totalARS)}
+                  </summary>
                   <div className="table-scroll">
                     <table>
                       <thead>
@@ -1986,7 +2027,7 @@ export default function Home() {
                       </tbody>
                     </table>
                   </div>
-                </section>
+                </details>
               </>
             )}
               </>
@@ -1994,201 +2035,207 @@ export default function Home() {
           </div>
         )}
 
-        {tab === "cargar" && (() => {
-          const esCompra = gForm.gasto === "Gasto variable";
-          const esFijo = gForm.gasto === "Gasto fijo";
+        {cargarAbierto && (() => {
           const esIngreso = gForm.gasto === "Ingreso extra";
-          const esTarjeta = gForm.formaPago === FORMA_TARJETA;
+          const esFijo = gForm.gasto === "Gasto fijo";
+          const esCompra = gForm.gasto === "Gasto variable";
+          const esTarjeta = !esIngreso && gForm.formaPago === FORMA_TARJETA;
           const cuotasN = Math.max(1, Number(gForm.cuotas) || 1);
           const montoN = Number(gForm.monto) || 0;
           const usd = gForm.moneda === "USD";
           const fmtM = (n) => (usd ? fmtUSD2(n) : fmt(n));
           const equiv = (n) => (usd && dolarBlue ? ` (≈ ${fmt(n * dolarBlue)} al dólar blue)` : "");
-          const medioTxt = esIngreso ? "" : (esTarjeta ? [gForm.marca, gForm.banco].filter(Boolean).join(" ") : (gForm.banco || gForm.formaPago));
-          const [fy, fm] = String(gForm.fecha || "").split("-");
+          const [fy, fm, fd] = String(gForm.fecha || "").split("-");
           const mesFecha = fm ? `${MESES_NOMBRE[Number(fm) - 1]} ${fy}` : "";
           const set = (patch) => setGForm({ ...gForm, ...patch });
 
+          const extras = (opciones.categorias || []).filter((c) => !CATEGORIAS_GASTO.includes(c) && !CATEGORIAS_INGRESO.includes(c) && !CATEGORIAS_VIEJAS.includes(c));
+          const categoriasDisponibles = esIngreso ? CATEGORIAS_INGRESO : [...CATEGORIAS_GASTO, ...extras];
+
           // Mes en que se paga una compra con tarjeta: cierre indicado a mano o día de cierre de la tarjeta.
           let mesPagoKey = null;
-          if (esCompra && esTarjeta && fm) {
+          if (esCompra && esTarjeta && fm && fd) {
+            const compra = new Date(Number(fy), Number(fm) - 1, Number(fd));
             if (gForm.fechaCierre) {
-              const [cy, cm] = gForm.fechaCierre.split("-").map(Number);
-              mesPagoKey = shiftMonthKey(`${cy}-${cm - 1}`, 1);
+              // Cierre a mano: si la compra es del día del cierre o posterior, ya cerró (se paga un mes más tarde).
+              const [cy, cm, cd] = gForm.fechaCierre.split("-").map(Number);
+              mesPagoKey = shiftMonthKey(mesCierreDesdeFechaCierre(compra, new Date(cy, cm - 1, cd)), 1);
             } else if (cierreDias[gForm.banco]) {
-              mesPagoKey = mesPagoCredito(new Date(Number(fy), Number(fm) - 1, Number(String(gForm.fecha).split("-")[2])), cierreDias[gForm.banco]);
+              mesPagoKey = mesPagoCredito(compra, cierreDias[gForm.banco]);
             }
           }
 
-          let resumen = "Completá la descripción y el monto para ver cómo queda.";
-          if (montoN > 0) {
-            if (esCompra) {
-              const total = montoN * cuotasN;
-              resumen = cuotasN > 1
-                ? `${cuotasN} cuotas de ${fmtM(montoN)} · total ${fmtM(total)}${equiv(total)}`
-                : `Un solo pago de ${fmtM(montoN)}${equiv(montoN)}`;
-              if (medioTxt) resumen += ` con ${medioTxt}`;
-              if (mesPagoKey) resumen += ` · se paga con el sueldo de ${labelTramo(mesPagoKey)}${cuotasN > 1 ? " (primera cuota)" : ""}`;
+          const faltan = [];
+          if (!String(gForm.desc).trim()) faltan.push("la descripción");
+          if (!(montoN > 0)) faltan.push("el monto");
+          if (!esIngreso && !gForm.categoria) faltan.push("la categoría");
+          if (!fm) faltan.push("la fecha");
+          if (!esIngreso && gForm.formaPago !== "Efectivo" && !gForm.banco) faltan.push(esTarjeta ? "la tarjeta (banco)" : "el banco");
+          if (esCompra && esTarjeta && gForm.banco && !mesPagoKey && fm) faltan.push(`el día de cierre de ${gForm.banco} (se carga en Tarjetas)`);
+          const completo = faltan.length === 0;
+
+          let impacto = null;
+          if (completo) {
+            const medioTxt = esIngreso ? "" : (esTarjeta ? [gForm.marca, gForm.banco].filter(Boolean).join(" ") : (gForm.formaPago === "Efectivo" ? "Efectivo" : (gForm.banco || gForm.formaPago)));
+            if (esCompra && esTarjeta) {
+              const ultimo = shiftMonthKey(mesPagoKey, cuotasN - 1);
+              impacto = {
+                titulo: cuotasN > 1 ? `${labelTramo(mesPagoKey)} → ${labelTramo(ultimo)}` : labelTramo(mesPagoKey),
+                detalle: cuotasN > 1
+                  ? `${cuotasN} cuotas de ${fmtM(montoN)} con ${medioTxt}, una por mes con el sueldo de cada mes. Total ${fmtM(montoN * cuotasN)}${equiv(montoN * cuotasN)}.`
+                  : `Un solo pago de ${fmtM(montoN)}${equiv(montoN)} con ${medioTxt}.`
+              };
+            } else if (esCompra) {
+              const ultimo = shiftMonthKey(`${fy}-${Number(fm) - 1}`, cuotasN - 1);
+              impacto = {
+                titulo: cuotasN > 1 ? `${mesFecha} → ${labelTramo(ultimo)}` : mesFecha,
+                detalle: cuotasN > 1
+                  ? `${cuotasN} cuotas de ${fmtM(montoN)} (${medioTxt}). Total ${fmtM(montoN * cuotasN)}${equiv(montoN * cuotasN)}.`
+                  : `${fmtM(montoN)}${equiv(montoN)} (${medioTxt}), en el mes de la compra.`
+              };
             } else if (esFijo) {
-              resumen = `Se suman ${fmtM(montoN)} a tus gastos todos los meses${equiv(montoN)}`;
-              if (medioTxt) resumen += ` (${medioTxt})`;
+              impacto = { titulo: `Todos los meses desde ${mesFecha}`, detalle: `Se suman ${fmtM(montoN)}${equiv(montoN)} a tus gastos cada mes (${medioTxt}).` };
             } else {
-              resumen = `Se suman ${fmtM(montoN)} a tus ingresos${mesFecha ? ` de ${mesFecha}` : ""}${equiv(montoN)}`;
+              impacto = { titulo: mesFecha, detalle: `Se suman ${fmtM(montoN)}${equiv(montoN)} a tus ingresos de ese mes.` };
             }
           }
 
-          const recientes = historico ? [...historico].sort((a, b) => b.row - a.row).slice(0, 8) : [];
+          const recientes = historico ? [...historico].sort((a, b) => b.row - a.row).slice(0, 6) : [];
           const claseInfo = (g) => ({ "Gasto fijo": ["Fijo", "badge-neutral"], "Gasto variable": ["Compra", "badge-info"], "Ingreso extra": ["Ingreso", "badge-ok"] }[g] || [g, "badge-neutral"]);
 
           return (
-            <div className="stack cargar-layout">
-              <section className="card form-card">
-                <div className="card-head">
-                  <h2>Cargar a la planilla</h2>
-                  <p className="hint" style={{ margin: "4px 0 0" }}>Elegí qué es y completá los datos. Abajo ves cómo va a quedar antes de guardar.</p>
+            <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setCargarAbierto(false); }}>
+              <div className="modal" role="dialog" aria-modal="true" aria-label="Cargar a la planilla">
+                <div className="modal-head">
+                  <h2>Cargar</h2>
+                  <button className="btn-icon" aria-label="Cerrar" onClick={() => setCargarAbierto(false)}>✕</button>
                 </div>
 
-                <div className="form-step">
-                  <div className="step-title"><span className="step-num">1</span>¿Qué querés cargar?</div>
-                  <div className="clase-picker">
-                    {CLASES_CARGA.map((c) => (
-                      <button key={c.gasto} type="button" className={`clase-opt ${gForm.gasto === c.gasto ? "active" : ""}`} onClick={() => set({ gasto: c.gasto })}>
-                        <span className="clase-titulo">{c.titulo}</span>
-                        <span className="clase-ayuda">{c.ayuda}</span>
-                      </button>
-                    ))}
+                <Segmented
+                  value={esIngreso ? "ingreso" : "gasto"}
+                  onChange={(v) => set(v === "ingreso" ? { gasto: "Ingreso extra", categoria: "" } : { gasto: "Gasto variable", categoria: "" })}
+                  options={[{ value: "gasto", label: "Gasto" }, { value: "ingreso", label: "Ingreso" }]}
+                />
+
+                <label>Descripción</label>
+                <input autoFocus placeholder={esIngreso ? "Ej: Venta, Reintegro..." : "Ej: Zapatillas, Netflix, Nafta..."} value={gForm.desc} onChange={(e) => set({ desc: e.target.value })} />
+
+                <div className="form-grid">
+                  <div>
+                    <label>{esCompra && cuotasN > 1 ? "Monto de cada cuota" : "Monto"}</label>
+                    <input type="number" min="0" placeholder="0" value={gForm.monto} onChange={(e) => set({ monto: e.target.value })} />
+                  </div>
+                  <div>
+                    <label>Moneda</label>
+                    <Segmented value={gForm.moneda} onChange={(v) => set({ moneda: v })} options={opciones.monedas.length ? opciones.monedas : ["ARS", "USD"]} />
                   </div>
                 </div>
 
-                <div className="form-step">
-                  <div className="step-title"><span className="step-num">2</span>Qué es</div>
-                  <label>Descripción</label>
-                  <input placeholder={esIngreso ? "Ej: Venta, Reintegro..." : (esFijo ? "Ej: Netflix, Seguro del auto..." : "Ej: Zapatillas")} value={gForm.desc} onChange={(e) => set({ desc: e.target.value })} />
+                <label>Categoría</label>
+                <div className="chips">
+                  {categoriasDisponibles.map((c) => (
+                    <button key={c} type="button" className={`chip ${gForm.categoria === c ? "active" : ""}`} onClick={() => set({ categoria: c })}>{c}</button>
+                  ))}
+                </div>
+
+                <div className="form-grid">
+                  <div>
+                    <label>{esIngreso ? "Fecha del ingreso" : "Fecha"}</label>
+                    <input type="date" value={gForm.fecha} onChange={(e) => set({ fecha: e.target.value })} />
+                  </div>
                   {!esIngreso && (
-                    <div className="form-grid">
-                      <div>
-                        <label>Tipo</label>
-                        <select value={gForm.tipo} onChange={(e) => set({ tipo: e.target.value })}>
-                          {opciones.tipos.map((v) => <option key={v}>{v}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label>Categoría (opcional)</label>
-                        <input list="lista-categorias" placeholder="Ej: Comida, Salidas, Auto..." value={gForm.categoria} onChange={(e) => set({ categoria: e.target.value })} />
-                        <datalist id="lista-categorias">{opciones.categorias.map((c) => <option key={c} value={c} />)}</datalist>
-                      </div>
+                    <div>
+                      <label>&nbsp;</label>
+                      <label className="check-row">
+                        <input type="checkbox" checked={esFijo} onChange={(e) => set({ gasto: e.target.checked ? "Gasto fijo" : "Gasto variable", cuotas: 1 })} />
+                        Se repite todos los meses
+                      </label>
                     </div>
                   )}
                 </div>
 
-                <div className="form-step">
-                  <div className="step-title"><span className="step-num">3</span>Cuánto y cuándo</div>
-                  <div className="form-grid">
-                    <div>
-                      <label>Moneda</label>
-                      <Segmented value={gForm.moneda} onChange={(v) => set({ moneda: v })} options={opciones.monedas.length ? opciones.monedas : ["ARS", "USD"]} />
-                    </div>
-                    <div>
-                      <label>{esCompra && cuotasN > 1 ? "Monto de cada cuota" : "Monto"}</label>
-                      <input type="number" min="0" placeholder="0" value={gForm.monto} onChange={(e) => set({ monto: e.target.value })} />
-                    </div>
-                  </div>
-                  <div className="form-grid">
-                    <div>
-                      <label>{esCompra ? "Fecha de compra" : (esFijo ? "Fecha de alta" : "Fecha del ingreso")}</label>
-                      <input type="date" value={gForm.fecha} onChange={(e) => set({ fecha: e.target.value })} />
-                    </div>
-                    {esCompra && (
-                      <div>
-                        <label>Cuotas</label>
-                        <div className="cuotas-row">
-                          <Segmented
-                            value={String(cuotasN)}
-                            onChange={(v) => set({ cuotas: Number(v) })}
-                            options={["1", "3", "6", "12"]}
-                          />
-                          <input type="number" min="1" className="cuotas-input" value={gForm.cuotas} onChange={(e) => set({ cuotas: e.target.value })} />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
                 {!esIngreso && (
-                  <div className="form-step">
-                    <div className="step-title"><span className="step-num">4</span>Cómo se paga</div>
-                    <label>Forma de pago</label>
+                  <>
+                    <label>Cómo se paga</label>
                     <Segmented
                       value={gForm.formaPago}
                       onChange={(v) => set({ formaPago: v })}
                       options={opciones.formasPago.map((v) => ({ value: v, label: v === FORMA_TARJETA ? "Tarjeta" : v }))}
                     />
-                    <div className="form-grid">
-                      {gForm.formaPago !== "Efectivo" && (
-                        <div>
-                          <label>Banco</label>
-                          <select value={gForm.banco} onChange={(e) => set({ banco: e.target.value })}>
-                            <option value="">— Ninguno —</option>
-                            {opciones.bancos.map((v) => <option key={v}>{v}</option>)}
-                          </select>
-                        </div>
-                      )}
-                      {esTarjeta && (
-                        <div>
-                          <label>Marca de la tarjeta</label>
-                          <Segmented value={gForm.marca} onChange={(v) => set({ marca: v })} options={opciones.marcas} />
-                        </div>
-                      )}
-                    </div>
-                    {esTarjeta && esCompra && (
+                    {gForm.formaPago !== "Efectivo" && (
                       <>
-                        <label>Fecha de cierre de esta compra (opcional)</label>
-                        <input type="date" value={gForm.fechaCierre} onChange={(e) => set({ fechaCierre: e.target.value })} />
-                        <p className="hint" style={{ margin: "6px 0 0" }}>
-                          Si la cargás, las cuotas se calculan desde esta fecha exacta en vez de inferir el jueves de cierre.
-                        </p>
+                        <label>{esTarjeta ? "Tarjeta" : "Banco"}</label>
+                        <Segmented value={gForm.banco} onChange={(v) => set({ banco: v })} options={opciones.bancos} />
                       </>
                     )}
-                  </div>
+                    {esTarjeta && (
+                      <>
+                        <label>Marca</label>
+                        <Segmented value={gForm.marca} onChange={(v) => set({ marca: v })} options={opciones.marcas} />
+                      </>
+                    )}
+                    {esCompra && (
+                      <>
+                        <label>Cuotas</label>
+                        <div className="cuotas-row">
+                          <Segmented value={String(cuotasN)} onChange={(v) => set({ cuotas: Number(v) })} options={["1", "3", "6", "12"]} />
+                          <input type="number" min="1" className="cuotas-input" value={gForm.cuotas} onChange={(e) => set({ cuotas: e.target.value })} />
+                        </div>
+                      </>
+                    )}
+                    {esTarjeta && esCompra && (
+                      <details className="cierre-details">
+                        <summary>Cambiar la fecha de cierre de esta compra</summary>
+                        <input type="date" value={gForm.fechaCierre} onChange={(e) => set({ fechaCierre: e.target.value })} />
+                        <p className="hint" style={{ margin: "6px 0 0" }}>Si la ponés, las cuotas se calculan desde esa fecha exacta en vez del día de cierre de la tarjeta.</p>
+                      </details>
+                    )}
+                  </>
                 )}
 
-                <div className="resumen-box">
-                  <div className="resumen-label">Así queda</div>
-                  <div className="resumen-text">{gForm.desc ? <strong>{gForm.desc}: </strong> : null}{resumen}</div>
+                <div className={`impacto-box ${completo ? "ok" : ""}`}>
+                  {completo ? (
+                    <>
+                      <div className="resumen-label">{esCompra && esTarjeta ? "Se paga con el sueldo de" : "Impacta en"}</div>
+                      <div className="impacto-titulo">{impacto.titulo}</div>
+                      <div className="resumen-text">{impacto.detalle}</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="resumen-label">Dónde va a impactar</div>
+                      <div className="resumen-text">Falta {faltan.join(", ")} para saber en qué mes impacta.</div>
+                    </>
+                  )}
                 </div>
 
                 <button className="btn-primary btn-big" onClick={agregar}>Guardar en la planilla</button>
                 {addStatus && <div className="status">{addStatus}</div>}
-              </section>
 
-              <section className="card">
-                <div className="card-head-row">
-                  <h2>Gastos fijos cargados</h2>
-                  <span className="muted">{gastosFijos.length} · {fmt(gastosFijos.reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0))} por mes</span>
-                </div>
-                {renderFijos()}
-              </section>
-
-              <section className="card">
-                <div className="card-head"><h2>Lo último que cargaste</h2></div>
-                {recientes.length === 0 ? (
-                  <div className="empty-hint">Todavía no hay movimientos.</div>
-                ) : recientes.map((h) => {
-                  const [txt, cls] = claseInfo(h.gasto);
-                  return (
-                    <div className="reciente-row" key={h.row}>
-                      <div className="reciente-main">
-                        <span className="strong">{h.desc}</span>
-                        <span className="cat-item-medio">{h.fecha}{h.medio ? ` · ${h.medio}` : ""}</span>
+                <details className="cierre-details">
+                  <summary>Gastos fijos cargados · {gastosFijos.length} · {fmt(gastosFijos.reduce((acc, g) => acc + (Number(g.montoARS) || 0), 0))} por mes</summary>
+                  {renderFijos()}
+                </details>
+                <details className="cierre-details">
+                  <summary>Lo último que cargaste</summary>
+                  {recientes.length === 0 ? (
+                    <div className="empty-hint">Todavía no hay movimientos.</div>
+                  ) : recientes.map((h) => {
+                    const [txt, cls] = claseInfo(h.gasto);
+                    return (
+                      <div className="reciente-row" key={h.row}>
+                        <div className="reciente-main">
+                          <span className="strong">{h.desc}</span>
+                          <span className="cat-item-medio">{h.fecha}{h.medio ? ` · ${h.medio}` : ""}</span>
+                        </div>
+                        <div className="reciente-side">
+                          <span className={`badge ${cls}`}>{txt}{h.gasto === "Gasto variable" && Number(h.cuotas) > 1 ? ` · ${h.cuotas} cuotas` : ""}</span>
+                          <span className="reciente-monto">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</span>
+                        </div>
                       </div>
-                      <div className="reciente-side">
-                        <span className={`badge ${cls}`}>{txt}{h.gasto === "Gasto variable" && Number(h.cuotas) > 1 ? ` · ${h.cuotas} cuotas` : ""}</span>
-                        <span className="reciente-monto">{celdaEquivalencia(h.moneda, h.montoARS, h.montoUSD)}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </section>
+                    );
+                  })}
+                </details>
+              </div>
             </div>
           );
         })()}
