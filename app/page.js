@@ -14,7 +14,9 @@ const TABS = [
   { id: "gastos", label: "Gastos", icon: "receipt", sub: "Qué pasó con la plata, mes a mes." },
   { id: "tarjetas", label: "Tarjetas", icon: "card", sub: "Cierres, cuotas y gastos fijos de cada tarjeta." },
   { id: "proyeccion", label: "Proyección", icon: "chart", sub: "Cómo vas a estar los próximos meses." },
-  { id: "ahorro", label: "Ahorro", icon: "wallet", sub: "Tu ahorro acumulado, en pesos y dólares." }
+  { id: "ahorro", label: "Ahorro", icon: "wallet", sub: "Tu ahorro acumulado, en pesos y dólares." },
+  { id: "sueldos", label: "Sueldos", icon: "coins", sub: "Lo que cobrás cada mes: sueldo y extra." },
+  { id: "graficos", label: "Gráficos", icon: "bars", sub: "Lo que pasó contra lo proyectado, mes a mes." }
 ];
 
 // Qué se carga en el formulario: define la "clase" de fila en la planilla (columna A).
@@ -29,7 +31,7 @@ const FORMA_TARJETA = "Tarjeta de Crédito";
 // Paleta de los gráficos y las barras (tonos afines a los tokens de globals.css; el canvas no lee CSS).
 const PAL = {
   gasto: "#d6402b", gastoSuave: "#efb6ab", ingreso: "#9fd6b8", ahorro: "#0a7040", piso: "#8a8576",
-  libre: "#c9c1ae", variable: "#d98a12", cuota: "#2b44d6", grid: "#e6e0d3", texto: "#5a554a"
+  libre: "#c9c1ae", variable: "#d98a12", cuota: "#2b44d6", grid: "#e6e0d3", texto: "#5a554a", ingresoLinea: "#2f8f62"
 };
 Chart.defaults.color = PAL.texto;
 Chart.defaults.borderColor = PAL.grid;
@@ -212,6 +214,8 @@ const ICONOS = {
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>,
   receipt: <path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6" />,
   chart: <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />,
+  bars: <path d="M5 21V10M12 21V4M19 21v-7" />,
+  coins: <><circle cx="12" cy="12" r="9" /><path d="M14.5 9.2c-.4-.8-1.3-1.2-2.5-1.2-1.6 0-2.5.7-2.5 1.7s.9 1.5 2.5 1.8 2.5.8 2.5 1.8-.9 1.9-2.5 1.9c-1.3 0-2.2-.5-2.6-1.3M12 6.5V8m0 8v1.5" /></>,
   wallet: <><path d="M4 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11" /><circle cx="16" cy="13.5" r="1" /></>,
   "arrow-down-left": <path d="M17 7 7 17M17 17H7V7" />,
   "arrow-up-right": <path d="M7 17 17 7M7 7h10v10" />,
@@ -277,6 +281,25 @@ function calcAlertas(meses) {
   return lista;
 }
 
+const fmtCorto = (n) => "$" + (Math.abs(n) >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.round(n / 1000) + "k");
+
+// Opciones comunes de los gráficos de la sección Gráficos: una sola escala, leyenda arriba, grilla de línea fina.
+function opcionesChart(formato = fmtCorto) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { position: "top", labels: { usePointStyle: true, padding: 16, boxHeight: 8 } },
+      tooltip: { padding: 12, cornerRadius: 8, callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } }
+    },
+    scales: {
+      x: { grid: { display: false } },
+      y: { grid: { color: PAL.grid }, border: { display: false }, ticks: { callback: (v) => formato(v) } }
+    }
+  };
+}
+
 export default function Home() {
   const hoy = new Date();
   // El mes "vigente" a mostrar por defecto en todas las pestañas es siempre el mes calendario
@@ -306,6 +329,8 @@ export default function Home() {
   const [mesesBase, setMesesBase] = useState([]);
   const [capacidad, setCapacidad] = useState(null); // cuánto se puede gastar hasta el próximo cobro
   const [cobroAbierto, setCobroAbierto] = useState(false);
+  const [graficos, setGraficos] = useState(null); // evolutivo contra proyectado (se pide al abrir Gráficos)
+  const [graficosVista, setGraficosVista] = useState("ahorro");
   const [saldoMonto, setSaldoMonto] = useState(""); // lo que tengo hoy
   const [saldoPagados, setSaldoPagados] = useState([]); // ids de lo comprometido que ya pagué (tildes)
   const [saldoAhorrado, setSaldoAhorrado] = useState(""); // lo ahorrado desde el último cobro
@@ -334,6 +359,9 @@ export default function Home() {
   // referencia futuro — por defecto el mes calendario actual, no mesObjetivo.
   const hoyISO = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`;
   const [ahorroForm, setAhorroForm] = useState({ fecha: hoyISO, monto: "", moneda: "ARS" });
+  const [cobros, setCobros] = useState(null); // lo que realmente cobré (sueldo y extra); se pide al abrir Sueldos
+  const [cobroForm, setCobroForm] = useState({ fecha: hoyISO, monto: "", tipo: "sueldo", nota: "" });
+  const [cobroStatus, setCobroStatus] = useState("");
   const [ahorroStatus, setAhorroStatus] = useState("");
 
   const [filtroMes, setFiltroMes] = useState(mesObjetivo.month);
@@ -375,7 +403,11 @@ export default function Home() {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   const ahorroCanvasRef = useRef(null);
-  const ahorroChartRef = useRef(null);
+  const ahorroUsdRef = useRef(null);
+  const ahorroMesRef = useRef(null);
+  const sueldoRef = useRef(null);
+  const ahorroAcumRef = useRef(null);
+  const gastoIngRef = useRef(null);
   const gastosCanvasRef = useRef(null);
   const gastosChartRef = useRef(null);
   const gastosDashRef = useRef(null);
@@ -384,6 +416,7 @@ export default function Home() {
   const histChartRef = useRef(null);
 
   function render(payload, opts = {}) {
+    setGraficos(null); // algo cambió: los gráficos se piden de nuevo la próxima vez
     if (!opts.onlyBase) setMeses(payload.meses || []);
     if (!opts.anchored) setMesesBase(payload.meses || []);
     if (payload.porCuenta) setPorCuenta(payload.porCuenta);
@@ -520,15 +553,25 @@ export default function Home() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- carga bajo demanda vía fetch
     if (tab === "tarjetas" && cuotasMes === null) cargarCuotasMes().catch((e) => setLoadError(mensajeDeError(e)));
-    if (tab === "gastos" && gastosHist === null) cargarGastosMes().catch((e) => setLoadError(mensajeDeError(e)));
+    if ((tab === "gastos" || tab === "graficos") && gastosHist === null) cargarGastosMes().catch((e) => setLoadError(mensajeDeError(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  // Gráficos: los datos mes a mes se piden al abrir la sección y se vuelven a pedir si algo cambió (render los descarta).
   useEffect(() => {
-    if (!canvasRef.current || tab !== "proyeccion" || proyVista !== "proyeccion") return;
+    if (tab !== "sueldos" || cobros !== null) return;
+    fetchJSON("/api/cobros").then((r) => setCobros(r.cobros)).catch((e) => setLoadError(mensajeDeError(e)));
+  }, [tab, cobros]);
+
+  useEffect(() => {
+    if (tab !== "graficos" || graficos !== null) return;
+    fetchJSON("/api/graficos").then(setGraficos).catch((e) => setLoadError(mensajeDeError(e)));
+  }, [tab, graficos]);
+
+  useEffect(() => {
+    if (!canvasRef.current || tab !== "graficos" || graficosVista !== "proyeccion") return;
     if (chartRef.current) chartRef.current.destroy();
     if (!meses.length) return;
-    const fmtCorto = (n) => "$" + (Math.abs(n) >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.round(n / 1000) + "k");
     chartRef.current = new Chart(canvasRef.current.getContext("2d"), {
       data: {
         labels: meses.map((m) => m.label),
@@ -556,7 +599,7 @@ export default function Home() {
         }
       }
     });
-  }, [meses, tab, proyVista]);
+  }, [meses, tab, graficosVista]);
 
   async function guardarConfig() {
     setCfgStatus("Guardando...");
@@ -629,6 +672,34 @@ export default function Home() {
       setAhorroForm((f) => ({ ...f, monto: "" }));
     } catch (e) {
       setAhorroStatus("❌ " + e.message);
+    }
+  }
+
+  async function guardarCobro() {
+    setCobroStatus("Guardando...");
+    try {
+      const res = await fetchJSON("/api/cobros", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cobroForm)
+      });
+      setCobros(res.cobros);
+      setGraficos(null);
+      setCobroStatus("✅ Guardado");
+      setCobroForm((f) => ({ ...f, monto: "", nota: "" }));
+    } catch (e) {
+      setCobroStatus("❌ " + e.message);
+    }
+  }
+
+  async function eliminarCobroReal(c) {
+    if (!confirm(`¿Eliminar este cobro de ${fmt(c.monto)}?`)) return;
+    try {
+      const res = await fetchJSON(`/api/cobros/${encodeURIComponent(c.id)}`, { method: "DELETE" });
+      setCobros(res.cobros);
+      setGraficos(null);
+    } catch (e) {
+      setCobroStatus("❌ " + e.message);
     }
   }
 
@@ -915,7 +986,7 @@ export default function Home() {
   }, [gastosHist, objY, objM]);
 
   useEffect(() => {
-    if (!gastosCanvasRef.current || tab !== "gastos" || gastosVista !== "detalle") return;
+    if (!gastosCanvasRef.current || tab !== "graficos" || graficosVista !== "gastos") return;
     if (gastosChartRef.current) gastosChartRef.current.destroy();
     if (!evolutivo.length) return;
     gastosChartRef.current = new Chart(gastosCanvasRef.current.getContext("2d"), {
@@ -941,7 +1012,7 @@ export default function Home() {
         }
       }
     });
-  }, [evolutivo, tab, gastosVista]);
+  }, [evolutivo, tab, graficosVista]);
 
   // ---- Pestaña "Histórico": compras por fecha de compra, por categoría, más evolutivo ----
   const histRegistros = useMemo(() => {
@@ -1010,7 +1081,7 @@ export default function Home() {
   }, [histRegistros]);
 
   useEffect(() => {
-    if (!histCanvasRef.current || tab !== "gastos" || gastosVista !== "historico") return;
+    if (!histCanvasRef.current || tab !== "graficos" || graficosVista !== "gastos") return;
     if (histChartRef.current) histChartRef.current.destroy();
     if (!histEvolutivo.length) return;
     histChartRef.current = new Chart(histCanvasRef.current.getContext("2d"), {
@@ -1036,7 +1107,7 @@ export default function Home() {
         }
       }
     });
-  }, [histEvolutivo, tab, gastosVista]);
+  }, [histEvolutivo, tab, graficosVista]);
 
   // ---- Dashboard de gastos: ¿qué pasó con mi plata en el mes elegido? (solo histórico/corriente) ----
   const gastosKpis = useMemo(() => {
@@ -1093,7 +1164,7 @@ export default function Home() {
   }, [gastosHist, gastosMesFiltro, meses, mesesBase]);
 
   useEffect(() => {
-    if (!gastosDashRef.current || tab !== "gastos" || gastosVista !== "dashboard") return;
+    if (!gastosDashRef.current || tab !== "graficos" || graficosVista !== "gastos") return;
     if (gastosDashChart.current) gastosDashChart.current.destroy();
     if (!gastosKpis || !gastosKpis.serie.length) return;
     const s = gastosKpis.serie;
@@ -1120,7 +1191,7 @@ export default function Home() {
         }
       }
     });
-  }, [gastosKpis, tab, gastosVista]);
+  }, [gastosKpis, tab, graficosVista]);
 
   // Tenencia de ahorro: cada movimiento con su acumulado en la moneda en que se ahorró, y los
   // totales en pesos y en dólares (más su equivalente con el dólar blue vigente).
@@ -1139,38 +1210,154 @@ export default function Home() {
     return { filas, totalARS: accARS, totalUSD: accUSD, equivARS, equivUSD };
   }, [ahorroMovs, dolarBlue]);
 
+  // ---- Sección "Gráficos": ahorro, gastos e ingresos, evolutivo contra proyectado ----
+  const graficosSerie = useMemo(() => {
+    if (!graficos) return null;
+    let accProy = 0, accReal = 0;
+    const filas = graficos.meses.map((m) => {
+      accProy += m.ahorroProyectado;
+      if (m.ahorroReal !== null) accReal += m.ahorroReal;
+      return { ...m, accProy, accReal: m.ahorroReal === null ? null : accReal };
+    });
+    const hechos = filas.filter((m) => m.estado !== "futuro");
+    const real = hechos.reduce((acc, m) => acc + (m.ahorroReal || 0), 0);
+    const plan = hechos.reduce((acc, m) => acc + m.ahorroProyectado, 0);
+    return {
+      filas, real, plan, dif: real - plan,
+      desde: filas[0] ? filas[0].label : "", hasta: hechos.length ? hechos[hechos.length - 1].label : ""
+    };
+  }, [graficos]);
+
+  // Evolutivo de lo que realmente se cobró: sueldo normal y extra, por mes de cobro (no depende de la proyección).
+  const sueldoSerie = useMemo(() => {
+    if (!graficos) return null;
+    const cobrosLista = graficos.cobros || [];
+    if (!cobrosLista.length) return { vacio: true, meses: [] };
+    const porMes = {};
+    cobrosLista.forEach((c) => {
+      const [y, m] = c.fecha.split("-").map(Number);
+      const k = y * 12 + (m - 1);
+      if (!porMes[k]) porMes[k] = { sueldo: 0, extra: 0 };
+      porMes[k][c.tipo] += c.monto;
+    });
+    const claves = Object.keys(porMes).map(Number);
+    const [hy, hm] = String(graficos.hoy).split("-").map(Number);
+    const desde = Math.max(Math.min(...claves), hy * 12 + hm - 23); // como mucho los últimos 24 meses
+    const hasta = Math.max(...claves, hy * 12 + hm);
+    const meses = [];
+    for (let k = desde; k <= hasta; k++) {
+      const v = porMes[k] || { sueldo: 0, extra: 0 };
+      meses.push({ key: k, label: `${MESES_NOMBRE[k % 12].slice(0, 3).toLowerCase()} ${Math.floor(k / 12)}`, sueldo: v.sueldo, extra: v.extra });
+    }
+    const conSueldo = meses.filter((m) => m.sueldo > 0);
+    const ultimo = conSueldo.length ? conSueldo[conSueldo.length - 1] : null;
+    const anterior = conSueldo.length > 1 ? conSueldo[conSueldo.length - 2] : null;
+    const ultimos = conSueldo.slice(-6);
+    return {
+      meses, ultimo,
+      variacion: ultimo && anterior ? (ultimo.sueldo - anterior.sueldo) / anterior.sueldo : null,
+      promedio: ultimos.length ? ultimos.reduce((acc, m) => acc + m.sueldo, 0) / ultimos.length : null,
+      cuantosPromedio: ultimos.length,
+      totalExtra: meses.reduce((acc, m) => acc + m.extra, 0)
+    };
+  }, [graficos]);
+
   useEffect(() => {
-    if (!ahorroCanvasRef.current || tab !== "ahorro") return;
+    if (tab !== "graficos" || graficosVista !== "sueldos" || !sueldoSerie || sueldoSerie.vacio || !sueldoRef.current) return undefined;
+    const opciones = opcionesChart();
+    opciones.scales.x.stacked = true;
+    opciones.scales.y.stacked = true;
+    opciones.plugins.tooltip.callbacks.footer = (items) => {
+      const total = items.reduce((acc, it) => acc + (Number(it.parsed.y) || 0), 0);
+      return items.length > 1 ? `Total cobrado: ${fmt(total)}` : "";
+    };
+    const chart = new Chart(sueldoRef.current.getContext("2d"), {
+      type: "bar",
+      data: {
+        labels: sueldoSerie.meses.map((m) => m.label),
+        datasets: [
+          { label: "Sueldo", data: sueldoSerie.meses.map((m) => m.sueldo), backgroundColor: PAL.ingresoLinea, borderRadius: 4, maxBarThickness: 28 },
+          { label: "Extra", data: sueldoSerie.meses.map((m) => m.extra), backgroundColor: PAL.cuota, borderRadius: 4, maxBarThickness: 28 }
+        ]
+      },
+      options: opciones
+    });
+    return () => chart.destroy();
+  }, [sueldoSerie, tab, graficosVista]);
+
+  useEffect(() => {
+    if (tab !== "graficos" || graficosVista !== "ahorro" || !graficosSerie) return undefined;
+    const f = graficosSerie.filas;
+    const etiquetas = f.map((m) => (m.estado === "actual" ? `${m.label} · hoy` : m.label));
+    const charts = [];
+    if (ahorroMesRef.current) {
+      charts.push(new Chart(ahorroMesRef.current.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels: etiquetas,
+          datasets: [
+            { label: "Proyectado", data: f.map((m) => m.ahorroProyectado), backgroundColor: PAL.libre, borderRadius: 4, maxBarThickness: 18 },
+            { label: "Real", data: f.map((m) => m.ahorroReal), backgroundColor: PAL.ahorro, borderRadius: 4, maxBarThickness: 18 }
+          ]
+        },
+        options: opcionesChart()
+      }));
+    }
+    if (ahorroAcumRef.current) {
+      charts.push(new Chart(ahorroAcumRef.current.getContext("2d"), {
+        type: "line",
+        data: {
+          labels: etiquetas,
+          datasets: [
+            { label: "Proyectado", data: f.map((m) => m.accProy), borderColor: PAL.piso, backgroundColor: PAL.piso, borderWidth: 2, pointRadius: 3, tension: 0.2 },
+            { label: "Real", data: f.map((m) => m.accReal), borderColor: PAL.ahorro, backgroundColor: PAL.ahorro, borderWidth: 3, pointRadius: 4, tension: 0.2 }
+          ]
+        },
+        options: opcionesChart()
+      }));
+    }
+    return () => charts.forEach((c) => c.destroy());
+  }, [graficosSerie, tab, graficosVista]);
+
+  useEffect(() => {
+    if (tab !== "graficos" || graficosVista !== "gastos" || !graficosSerie || !gastoIngRef.current) return undefined;
+    const f = graficosSerie.filas;
+    const chart = new Chart(gastoIngRef.current.getContext("2d"), {
+      type: "bar",
+      data: {
+        labels: f.map((m) => (m.estado === "actual" ? `${m.label} · hoy` : m.label)),
+        datasets: [
+          { type: "bar", label: "Gastos (hasta hoy)", stack: "g", data: f.map((m) => (m.estado === "futuro" ? null : m.gastos)), backgroundColor: PAL.gasto, borderRadius: 4, maxBarThickness: 22 },
+          { type: "bar", label: "Gastos proyectados", stack: "g", data: f.map((m) => (m.estado === "futuro" ? m.gastos : null)), backgroundColor: PAL.gastoSuave, borderRadius: 4, maxBarThickness: 22 },
+          { type: "line", label: "Ingresos", data: f.map((m) => m.ingresos), borderColor: PAL.ingresoLinea, backgroundColor: PAL.ingresoLinea, borderWidth: 2, pointRadius: 3, tension: 0.2 }
+        ]
+      },
+      options: opcionesChart()
+    });
+    return () => chart.destroy();
+  }, [graficosSerie, tab, graficosVista]);
+
+  // Pesos y dólares ahorrados, cada uno en su propio gráfico (nunca dos escalas en un mismo gráfico).
+  useEffect(() => {
+    if (tab !== "graficos" || graficosVista !== "ahorro") return undefined;
     const filas = tenencia.filas;
-    if (ahorroChartRef.current) ahorroChartRef.current.destroy();
-    if (!filas.length) return;
-    const hayARS = filas.some((f) => f.moneda !== "USD");
-    const hayUSD = filas.some((f) => f.moneda === "USD");
-    ahorroChartRef.current = new Chart(ahorroCanvasRef.current.getContext("2d"), {
+    const charts = [];
+    const linea = (canvas, etiqueta, datos, color, formato) => new Chart(canvas.getContext("2d"), {
       type: "line",
       data: {
         labels: filas.map((f) => fechaLarga(f.fecha)),
-        datasets: [
-          ...(hayARS ? [{ label: "Pesos acumulados", data: filas.map((f) => f.accARS), yAxisID: "y", borderColor: PAL.gasto, backgroundColor: PAL.gasto, stepped: true, borderWidth: 3, pointRadius: 4 }] : []),
-          ...(hayUSD ? [{ label: "Dólares acumulados", data: filas.map((f) => f.accUSD), yAxisID: "y2", borderColor: PAL.ahorro, backgroundColor: PAL.ahorro, stepped: true, borderWidth: 3, pointRadius: 4 }] : [])
-        ]
+        datasets: [{ label: etiqueta, data: datos, borderColor: color, backgroundColor: color, stepped: true, borderWidth: 3, pointRadius: 4 }]
       },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        plugins: {
-          legend: { position: "top", labels: { usePointStyle: true, padding: 16, boxHeight: 8 } },
-          tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.dataset.yAxisID === "y2" ? fmtUSD2(ctx.parsed.y) : fmt(ctx.parsed.y)}` } }
-        },
-        scales: {
-          x: { grid: { display: false } },
-          y: { display: hayARS, position: "left", grid: { color: PAL.grid }, border: { display: false }, ticks: { callback: (v) => fmt(v) } },
-          y2: { display: hayUSD, position: "right", grid: { display: false }, border: { display: false }, ticks: { callback: (v) => fmtUSD2(v) } }
-        }
-      }
+      options: { ...opcionesChart(formato), plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` ${etiqueta}: ${formato(ctx.parsed.y)}` } } } }
     });
-  }, [tenencia, tab]);
+    if (ahorroCanvasRef.current && filas.some((f) => f.moneda !== "USD")) {
+      charts.push(linea(ahorroCanvasRef.current, "Pesos acumulados", filas.map((f) => f.accARS), PAL.gasto, fmt));
+    }
+    if (ahorroUsdRef.current && filas.some((f) => f.moneda === "USD")) {
+      charts.push(linea(ahorroUsdRef.current, "Dólares acumulados", filas.map((f) => f.accUSD), PAL.ahorro, fmtUSD2));
+    }
+    return () => charts.forEach((c) => c.destroy());
+  }, [tenencia, tab, graficosVista]);
 
   function irMesActualTarjeta() {
     setTarjetaMesFiltro(mesActual);
@@ -1678,11 +1865,6 @@ export default function Home() {
               );
             })()}
 
-            <section className="card">
-              <div className="card-head"><h2>Evolución de los próximos meses</h2></div>
-              <div className="chart-box"><canvas ref={canvasRef}></canvas></div>
-            </section>
-
             {alertasProy.length > 0 && (
               <section className="card">
                 <div className="card-head"><h2>Meses a mirar</h2></div>
@@ -1904,13 +2086,12 @@ export default function Home() {
 
             <section className="card">
               <div className="card-head">
-                <h2>Evolutivo de compras (valor de cuota)</h2>
+                <h2>Compras: lo más grande de cada mes</h2>
               </div>
               {histEvolutivo.length === 0 ? (
                 <Skeleton />
               ) : (
                 <>
-                  <div className="chart-box"><canvas ref={histCanvasRef}></canvas></div>
                   <div className="subsection-title">En qué más gasté cada mes</div>
                   <div className="top-mes-grid">
                     {histEvolutivo.map((m) => (
@@ -2002,22 +2183,6 @@ export default function Home() {
                   </section>
 
                   <section className="card">
-                    <div className="card-head-row">
-                      <h2>Evolución de gastos</h2>
-                      {gastosKpis.tendencia && (
-                        <span className={`badge ${gastosKpis.tendencia.texto === "en alza" ? "badge-info" : "badge-neutral"}`}>
-                          Tendencia {gastosKpis.tendencia.texto} ({gastosKpis.tendencia.dif > 0 ? "+" : ""}{Math.round(gastosKpis.tendencia.dif * 100)}%)
-                        </span>
-                      )}
-                    </div>
-                    <div className="chart-box" style={{ height: 240, marginBottom: 8 }}><canvas ref={gastosDashRef}></canvas></div>
-                    <p className="hint" style={{ margin: 0 }}>
-                      Línea punteada: promedio de {gastosKpis.serie.length} meses ({fmt(gastosKpis.promedio)}).
-                      {gastosKpis.tendencia ? " Tendencia: últimos 3 meses contra los 3 anteriores." : ""}
-                    </p>
-                  </section>
-
-                  <section className="card">
                     <div className="card-head"><h2>Los 5 gastos más grandes del mes</h2></div>
                     {gastosKpis.top5.map((g, i) => (
                       <div className="top-gasto" key={i}>
@@ -2090,13 +2255,12 @@ export default function Home() {
 
                 <section className="card">
                   <div className="card-head">
-                    <h2>Evolutivo de gastos</h2>
+                    <h2>Gastos: lo más grande de cada mes</h2>
                   </div>
                   {evolutivo.length === 0 ? (
                     <Skeleton />
                   ) : (
                     <>
-                      <div className="chart-box"><canvas ref={gastosCanvasRef}></canvas></div>
                       <div className="subsection-title">En qué más gasté cada mes</div>
                       <div className="top-mes-grid">
                         {evolutivo.map((m) => (
@@ -2112,6 +2276,227 @@ export default function Home() {
                     </>
                   )}
                 </section>
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === "sueldos" && (
+          <div className="stack">
+            <section className="card">
+              <div className="card-head"><h2>Anotá lo que cobraste</h2></div>
+              <p className="hint" style={{ margin: "0 0 12px" }}>Es solo un registro de lo que de verdad cobraste: no cambia la proyección. El aguinaldo y cualquier otro ingreso aparte va como extra.</p>
+              <div className="pago-fields">
+                <div className="field-row">
+                  <div className="field">
+                    <label htmlFor="cobro-fecha">Fecha de cobro</label>
+                    <input id="cobro-fecha" type="date" value={cobroForm.fecha} onChange={(e) => setCobroForm({ ...cobroForm, fecha: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="cobro-monto">Monto cobrado</label>
+                    <input id="cobro-monto" type="number" inputMode="decimal" placeholder="0" value={cobroForm.monto} onChange={(e) => setCobroForm({ ...cobroForm, monto: e.target.value })} />
+                  </div>
+                </div>
+                <div className="field">
+                  <label>Tipo</label>
+                  <Segmented value={cobroForm.tipo} onChange={(v) => setCobroForm({ ...cobroForm, tipo: v })} options={[{ value: "sueldo", label: "Sueldo" }, { value: "extra", label: "Extra" }]} />
+                </div>
+                <div className="field">
+                  <label htmlFor="cobro-nota">Nota <span className="muted">(opcional)</span></label>
+                  <input id="cobro-nota" type="text" maxLength={80} placeholder={cobroForm.tipo === "extra" ? "Ej.: aguinaldo, turnos, venta" : "Ej.: octubre"} value={cobroForm.nota} onChange={(e) => setCobroForm({ ...cobroForm, nota: e.target.value })} />
+                </div>
+                <button className="btn-primary" onClick={guardarCobro}>Guardar cobro</button>
+                {cobroStatus && <StatusMsg texto={cobroStatus} />}
+              </div>
+            </section>
+
+            <section className="card">
+              <div className="card-head"><h2>Lo que fuiste cobrando</h2></div>
+              {cobros === null ? (
+                <Skeleton />
+              ) : cobros.length === 0 ? (
+                <div className="empty-hint">Todavía no anotaste ningún cobro. El evolutivo se arma con lo que anotes acá.</div>
+              ) : (
+                <div className="mov-list">
+                  {cobros.map((c) => (
+                    <div className="mov-row" key={c.id}>
+                      <div className="mov-fecha">{fechaLarga(c.fecha)}</div>
+                      <div className="mov-monto pos">+ {fmt(c.monto)}</div>
+                      <div className="mov-acum">
+                        <span className={`badge ${c.tipo === "extra" ? "badge-info" : "badge-ok"}`}>{c.tipo === "extra" ? "Extra" : "Sueldo"}</span>
+                        {c.nota ? <span className="muted"> {c.nota}</span> : null}
+                      </div>
+                      <button className="btn-danger-ghost" onClick={() => eliminarCobroReal(c)}>Eliminar</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="hint" style={{ margin: "12px 0 0" }}>El gráfico de evolución está en la sección Gráficos → Sueldos.</p>
+            </section>
+          </div>
+        )}
+
+        {tab === "graficos" && (
+          <div className="stack">
+            <Segmented value={graficosVista} onChange={setGraficosVista} options={[{ value: "ahorro", label: "Ahorro" }, { value: "gastos", label: "Gastos" }, { value: "sueldos", label: "Sueldos" }, { value: "proyeccion", label: "Proyección" }]} />
+
+            {graficosSerie === null ? (
+              <section className="card"><Skeleton /></section>
+            ) : (
+              <>
+                {graficosVista === "ahorro" && (
+                  <>
+                    <div className="kpi-3">
+                      <section className="card">
+                        <div className="stat-tile-label">Ahorrado de verdad</div>
+                        <div className="stat-tile-value">{fmt(graficosSerie.real)}</div>
+                        <div className="stat-tile-sub">de {graficosSerie.desde} a {graficosSerie.hasta}</div>
+                      </section>
+                      <section className="card">
+                        <div className="stat-tile-label">Lo proyectado</div>
+                        <div className="stat-tile-value">{fmt(graficosSerie.plan)}</div>
+                        <div className="stat-tile-sub">ingresos − gastos − piso, en los mismos meses</div>
+                      </section>
+                      <section className="card">
+                        <div className="stat-tile-label">Diferencia</div>
+                        <div className={`stat-tile-value ${graficosSerie.dif >= 0 ? "pos" : "neg"}`}>{graficosSerie.dif >= 0 ? "+" : "−"}{fmt(Math.abs(graficosSerie.dif))}</div>
+                        <div className="stat-tile-sub">{graficosSerie.dif >= 0 ? "ahorraste más de lo proyectado" : "ahorraste menos de lo proyectado"}</div>
+                      </section>
+                    </div>
+
+                    <section className="card">
+                      <div className="card-head"><h2>Ahorro por mes: proyectado contra real</h2></div>
+                      <div className="chart-box"><canvas ref={ahorroMesRef}></canvas></div>
+                      <p className="hint grafico-nota">Lo proyectado es lo que queda de los ingresos después de los gastos y el piso. Lo real es lo que cargaste en Ahorro ese mes. Los meses que vienen solo tienen proyección.</p>
+                    </section>
+
+                    <section className="card">
+                      <div className="card-head"><h2>Ahorro acumulado</h2></div>
+                      <div className="chart-box"><canvas ref={ahorroAcumRef}></canvas></div>
+                    </section>
+
+                    {tenencia.filas.some((f) => f.moneda !== "USD") && (
+                      <section className="card">
+                        <div className="card-head"><h2>Pesos ahorrados, acumulado</h2></div>
+                        <div className="chart-box"><canvas ref={ahorroCanvasRef}></canvas></div>
+                      </section>
+                    )}
+                    {tenencia.filas.some((f) => f.moneda === "USD") && (
+                      <section className="card">
+                        <div className="card-head"><h2>Dólares ahorrados, acumulado</h2></div>
+                        <div className="chart-box"><canvas ref={ahorroUsdRef}></canvas></div>
+                      </section>
+                    )}
+                  </>
+                )}
+
+                {graficosVista === "gastos" && (
+                  <>
+                    <section className="card">
+                      <div className="card-head"><h2>Gastos contra ingresos</h2></div>
+                      <div className="chart-box"><canvas ref={gastoIngRef}></canvas></div>
+                      <p className="hint grafico-nota">Lo sólido ya pasó (el mes en curso incluye lo que todavía falta pagar); lo más claro es lo comprometido para los meses que vienen.</p>
+                    </section>
+
+                    <section className="card">
+                      <div className="card-head-row">
+                        <h2>Evolución de gastos</h2>
+                        {gastosKpis && gastosKpis.tendencia && (
+                          <span className={`badge ${gastosKpis.tendencia.texto === "en alza" ? "badge-info" : "badge-neutral"}`}>
+                            Tendencia {gastosKpis.tendencia.texto} ({gastosKpis.tendencia.dif > 0 ? "+" : ""}{Math.round(gastosKpis.tendencia.dif * 100)}%)
+                          </span>
+                        )}
+                      </div>
+                      {!gastosKpis ? <Skeleton /> : (
+                        <>
+                          <div className="chart-box" style={{ height: 240, marginBottom: 8 }}><canvas ref={gastosDashRef}></canvas></div>
+                          <p className="hint" style={{ margin: 0 }}>
+                            Línea punteada: promedio de {gastosKpis.serie.length} meses ({fmt(gastosKpis.promedio)}).
+                            {gastosKpis.tendencia ? " Tendencia: últimos 3 meses contra los 3 anteriores." : ""}
+                          </p>
+                        </>
+                      )}
+                    </section>
+
+                    <section className="card">
+                      <div className="card-head"><h2>Evolutivo de gastos</h2></div>
+                      {evolutivo.length === 0 ? <Skeleton /> : <div className="chart-box"><canvas ref={gastosCanvasRef}></canvas></div>}
+                    </section>
+
+                    <section className="card">
+                      <div className="card-head"><h2>Evolutivo de compras (valor de cuota)</h2></div>
+                      {histEvolutivo.length === 0 ? <Skeleton /> : <div className="chart-box"><canvas ref={histCanvasRef}></canvas></div>}
+                    </section>
+                  </>
+                )}
+
+                {graficosVista === "sueldos" && (
+                  !sueldoSerie || sueldoSerie.vacio ? (
+                    <section className="card">
+                      <div className="card-head"><h2>Evolutivo de lo que cobraste</h2></div>
+                      <div className="empty-hint">Todavía no anotaste cobros. Cargalos en la sección Sueldos y acá aparece el evolutivo.</div>
+                    </section>
+                  ) : (
+                    <>
+                      <div className="kpi-3">
+                        <section className="card">
+                          <div className="stat-tile-label">Último sueldo</div>
+                          <div className="stat-tile-value">{sueldoSerie.ultimo ? fmt(sueldoSerie.ultimo.sueldo) : "—"}</div>
+                          <div className="stat-tile-sub">
+                            {sueldoSerie.ultimo ? sueldoSerie.ultimo.label : "sin sueldos anotados"}
+                            {sueldoSerie.variacion === null ? "" : (Math.round(sueldoSerie.variacion * 1000) === 0
+                              ? " · igual que el anterior"
+                              : ` · ${sueldoSerie.variacion > 0 ? "+" : "−"}${Math.abs(Math.round(sueldoSerie.variacion * 1000) / 10)}% contra el anterior`)}
+                          </div>
+                        </section>
+                        <section className="card">
+                          <div className="stat-tile-label">Sueldo promedio</div>
+                          <div className="stat-tile-value">{sueldoSerie.promedio !== null ? fmt(sueldoSerie.promedio) : "—"}</div>
+                          <div className="stat-tile-sub">de los últimos {sueldoSerie.cuantosPromedio} meses con sueldo</div>
+                        </section>
+                        <section className="card">
+                          <div className="stat-tile-label">Extras cobrados</div>
+                          <div className="stat-tile-value">{fmt(sueldoSerie.totalExtra)}</div>
+                          <div className="stat-tile-sub">en {sueldoSerie.meses.length} {sueldoSerie.meses.length === 1 ? "mes" : "meses"} (no incluye el sueldo normal)</div>
+                        </section>
+                      </div>
+                      <section className="card">
+                        <div className="card-head"><h2>Evolutivo de lo que cobraste</h2></div>
+                        <div className="chart-box"><canvas ref={sueldoRef}></canvas></div>
+                        <p className="hint grafico-nota">Cuenta solo lo que anotaste en Sueldos, por mes de cobro. El sueldo normal y los extras (aguinaldo, turnos, ventas) van en colores distintos.</p>
+                      </section>
+                    </>
+                  )
+                )}
+
+                {graficosVista === "proyeccion" && (
+                  <section className="card">
+                    <div className="card-head"><h2>Evolución de los próximos meses</h2></div>
+                    <div className="chart-box"><canvas ref={canvasRef}></canvas></div>
+                  </section>
+                )}
+
+                <details className="cierre-details">
+                  <summary>Ver los datos en una tabla</summary>
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr><th>Mes</th><th className="num">Ingresos</th><th className="num">Gastos</th><th className="num">Ahorro proyectado</th><th className="num">Ahorro real</th></tr>
+                      </thead>
+                      <tbody>
+                        {graficosSerie.filas.map((m) => (
+                          <tr key={m.key}>
+                            <td className="strong">{m.label}{m.estado === "actual" ? " · hoy" : ""}</td>
+                            <td className="num">{fmt(m.ingresos)}</td>
+                            <td className="num">{fmt(m.gastos)}</td>
+                            <td className="num">{fmt(m.ahorroProyectado)}</td>
+                            <td className="num">{m.ahorroReal === null ? "—" : fmt(m.ahorroReal)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
               </>
             )}
           </div>
@@ -2140,10 +2525,8 @@ export default function Home() {
                   <span className="badge badge-neutral">≈ {fmtUSD2(tenencia.equivUSD)}</span>
                 </div>
               </div>
-              {tenencia.filas.length === 0 ? (
+              {tenencia.filas.length === 0 && (
                 <div className="empty-hint">Todavía no cargaste ahorros. Agregá el primero abajo.</div>
-              ) : (
-                <div className="chart-box"><canvas ref={ahorroCanvasRef}></canvas></div>
               )}
             </section>
 

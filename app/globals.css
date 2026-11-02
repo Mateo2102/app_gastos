@@ -873,7 +873,7 @@ input[aria-invalid="true"] { border-color: var(--danger); background: var(--dang
 
 .bottomnav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
   background: var(--surface); border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -1198,3 +1198,11 @@ button:active:not(:disabled) {
 .cobro-card .btn-pair { margin-top: 12px; }
 .cobro-card .btn-pair button { margin-top: 0; }
 .cobro-resultado { margin-top: 16px; padding-top: 4px; border-top: 1px solid var(--border); }
+
+/* ---------- Sección Gráficos ---------- */
+.kpi-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 760px) { .kpi-3 { grid-template-columns: 1fr; } }
+.stat-tile-value.pos { color: var(--green); }
+.stat-tile-value.neg { color: var(--danger); }
+.grafico-nota { margin: 10px 0 0; }
+.bottomlink span { font-size: 10px; letter-spacing: -0.02em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
