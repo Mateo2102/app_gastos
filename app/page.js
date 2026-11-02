@@ -307,7 +307,8 @@ export default function Home() {
   const [capacidad, setCapacidad] = useState(null); // cuánto se puede gastar hasta el próximo cobro
   const [cobroAbierto, setCobroAbierto] = useState(false);
   const [saldoMonto, setSaldoMonto] = useState(""); // lo que tengo hoy
-  const [saldoPagado, setSaldoPagado] = useState(""); // de lo comprometido, lo que ya pagué
+  const [saldoPagados, setSaldoPagados] = useState([]); // ids de lo comprometido que ya pagué (tildes)
+  const [saldoAhorrado, setSaldoAhorrado] = useState(""); // lo ahorrado desde el último cobro
   const [saldoStatus, setSaldoStatus] = useState("");
   const [hoyKey, setHoyKey] = useState(""); // "YYYY-M" del mes en curso (según el servidor)
   const [porCuenta, setPorCuenta] = useState(null);
@@ -386,7 +387,10 @@ export default function Home() {
     if (!opts.onlyBase) setMeses(payload.meses || []);
     if (!opts.anchored) setMesesBase(payload.meses || []);
     if (payload.porCuenta) setPorCuenta(payload.porCuenta);
-    if (payload.capacidad !== undefined) setCapacidad(payload.capacidad);
+    if (payload.capacidad !== undefined) {
+      setCapacidad(payload.capacidad);
+      setSaldoAhorrado(payload.capacidad && payload.capacidad.ahorradoPeriodo > 0 ? String(Math.round(payload.capacidad.ahorradoPeriodo)) : "");
+    }
     if (payload.hoy) setHoyKey(payload.hoy);
     if (payload.config) {
       setCfgPiso(payload.config.piso || "");
@@ -395,7 +399,7 @@ export default function Home() {
       if (payload.config.cierreDias) setCierreDias(payload.config.cierreDias);
       const sa = payload.config.saldoActual;
       setSaldoMonto(sa ? String(sa.monto) : "");
-      setSaldoPagado(sa && sa.pagado ? String(sa.pagado) : "");
+      setSaldoPagados(sa && Array.isArray(sa.pagados) ? sa.pagados : []);
     }
     if (payload.dolarBlue) setDolarBlue(payload.dolarBlue);
     else setDolarBlue(0);
@@ -754,14 +758,18 @@ export default function Home() {
     }
   }
 
-  // Lo que tengo hoy (y lo que ya pagué de lo comprometido). Vacío = volver a la estimación.
+  // Cierre del período: qué ya pagué (tildes), cuánto tengo y cuánto ahorré (se carga solo en Ahorro).
+  function alternarPagado(id) {
+    setSaldoPagados((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
+  }
+
   async function guardarSaldo(borrar = false) {
     setSaldoStatus("Guardando...");
     try {
       const res = await fetchJSON("/api/saldo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(borrar ? { monto: "" } : { monto: saldoMonto, pagado: saldoPagado })
+        body: JSON.stringify(borrar ? { monto: "" } : { monto: saldoMonto, pagados: saldoPagados, ahorrado: saldoAhorrado })
       });
       render(res, { onlyBase: true });
       setSaldoStatus(borrar ? "Listo: vuelve a la estimación." : "✅ Actualizado");
@@ -1400,58 +1408,75 @@ export default function Home() {
                           </button>
                           {cobroAbierto && (
                             <div id="cobro-panel" className="cobro-panel">
-                              {capacidad.enDeficit ? (
-                                <p className="cobro-deficit">
-                                  {capacidad.modo === "saldo"
-                                    ? `Con lo que tenés no alcanza para lo que falta pagar y el piso de ${fmt(capacidad.piso)}: faltan ${fmt(-capacidad.libre)}.`
-                                    : `Con lo comprometido para ${labelTramo(capacidad.mesKey)} no llegás a cubrir el piso de ${fmt(capacidad.piso)}: faltan ${fmt(-capacidad.libre)}.`}
-                                </p>
-                              ) : (
-                                <div className="cobro-valor">{fmt(capacidad.porDia)}<small> por día hasta el {fechaCortaISO(capacidad.hasta)}</small></div>
-                              )}
+                              <p className="cobro-intro muted">Respondé tres cosas y te digo cuánto podés gastar por día hasta cobrar el {fechaCortaISO(capacidad.hasta)}.</p>
 
-                              <div className="cobro-cuenta">
-                                {capacidad.modo === "saldo" ? (
-                                  <>
-                                    <span>Tengo hoy <strong>{fmt(capacidad.saldo.monto)}</strong></span>
-                                    <span>− Falta pagar <strong>{fmt(capacidad.pendiente)}</strong>{capacidad.pagado > 0 ? ` (ya pagaste ${fmt(capacidad.pagado)})` : ""}</span>
-                                    <span>− Piso <strong>{fmt(capacidad.piso)}</strong></span>
-                                    {capacidad.ahorrado > 0 && <span>− Ahorrado después de cargar esto <strong>{fmt(capacidad.ahorrado)}</strong></span>}
-                                    <span>= Libre <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <span>Ingresos de {labelTramo(capacidad.mesKey)} <strong>{fmt(capacidad.ingresos)}</strong></span>
-                                    <span>− Comprometido <strong>{fmt(capacidad.comprometido)}</strong></span>
-                                    <span>− Piso <strong>{fmt(capacidad.piso)}</strong></span>
-                                    {capacidad.ahorrado > 0 && <span>− Ahorrado desde el último cobro <strong>{fmt(capacidad.ahorrado)}</strong></span>}
-                                    <span>= Libre <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
-                                  </>
-                                )}
+                              <fieldset className="cobro-paso">
+                                <legend>1. ¿Qué ya pagaste de {labelTramo(capacidad.mesKey)}?</legend>
+                                {capacidad.grupos.length === 0 ? (
+                                  <p className="muted">No hay nada comprometido para este mes.</p>
+                                ) : capacidad.grupos.map((g) => (
+                                  <label className="cobro-check" key={g.id}>
+                                    <input type="checkbox" checked={saldoPagados.includes(g.id)} onChange={() => alternarPagado(g.id)} />
+                                    <span>{g.tipo === "tarjeta" ? "Tarjeta " : ""}{g.nombre}</span>
+                                    <strong>{fmt(g.total)}</strong>
+                                  </label>
+                                ))}
+                              </fieldset>
+
+                              <div className="cobro-paso">
+                                <label htmlFor="saldo-monto">2. ¿Cuánto tenés hoy en tu cuenta?</label>
+                                <input id="saldo-monto" type="number" inputMode="decimal" placeholder="Ej.: 650000" value={saldoMonto} onChange={(e) => setSaldoMonto(e.target.value)} />
                               </div>
 
-                              <div className="cobro-form">
-                                <div className="field">
-                                  <label htmlFor="saldo-monto">Lo que tengo hoy</label>
-                                  <input id="saldo-monto" type="number" inputMode="decimal" placeholder="Ej.: 650000" value={saldoMonto} onChange={(e) => setSaldoMonto(e.target.value)} />
+                              <div className="cobro-paso">
+                                <label htmlFor="saldo-ahorrado">3. ¿Cuánto ahorraste desde que cobraste?</label>
+                                <input id="saldo-ahorrado" type="number" inputMode="decimal" placeholder="0" value={saldoAhorrado} onChange={(e) => setSaldoAhorrado(e.target.value)} />
+                                <small className="muted">Se carga solo en la pestaña Ahorro. Es el total del período, no lo que sumás hoy.</small>
+                              </div>
+
+                              <div className="btn-pair">
+                                <button className="btn-primary" onClick={() => guardarSaldo(false)} disabled={saldoMonto === ""}>Calcular</button>
+                                {capacidad.saldo && <button className="btn-ghost" onClick={() => guardarSaldo(true)}>Usar la estimación</button>}
+                              </div>
+                              {saldoStatus && <StatusMsg texto={saldoStatus} />}
+
+                              <div className="cobro-resultado">
+                                {capacidad.enDeficit ? (
+                                  <p className="cobro-deficit">
+                                    {capacidad.modo === "saldo"
+                                      ? `Con lo que tenés no alcanza para lo que falta pagar y el piso de ${fmt(capacidad.piso)}: faltan ${fmt(-capacidad.libre)}.`
+                                      : `Con lo comprometido para ${labelTramo(capacidad.mesKey)} no llegás a cubrir el piso de ${fmt(capacidad.piso)}: faltan ${fmt(-capacidad.libre)}.`}
+                                  </p>
+                                ) : (
+                                  <div className="cobro-valor">{fmt(capacidad.porDia)}<small> por día hasta el {fechaCortaISO(capacidad.hasta)}</small></div>
+                                )}
+                                <div className="cobro-cuenta">
+                                  {capacidad.modo === "saldo" ? (
+                                    <>
+                                      <span>Tenés <strong>{fmt(capacidad.saldo.monto)}</strong></span>
+                                      <span>− Te falta pagar <strong>{fmt(capacidad.pendiente)}</strong>{capacidad.pagado > 0 ? ` (ya pagaste ${fmt(capacidad.pagado)})` : ""}</span>
+                                      <span>− Piso <strong>{fmt(capacidad.piso)}</strong></span>
+                                      {capacidad.ahorrado > 0 && <span>− Ahorrado después de calcular esto <strong>{fmt(capacidad.ahorrado)}</strong></span>}
+                                      <span>= Libre <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>Ingresos de {labelTramo(capacidad.mesKey)} <strong>{fmt(capacidad.ingresos)}</strong></span>
+                                      <span>− Comprometido <strong>{fmt(capacidad.comprometido)}</strong></span>
+                                      <span>− Piso <strong>{fmt(capacidad.piso)}</strong></span>
+                                      {capacidad.ahorrado > 0 && <span>− Ahorrado desde el último cobro <strong>{fmt(capacidad.ahorrado)}</strong></span>}
+                                      <span>= Libre <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
+                                    </>
+                                  )}
                                 </div>
-                                <div className="field">
-                                  <label htmlFor="saldo-pagado">De lo comprometido, ya pagué <span className="muted">(opcional)</span></label>
-                                  <input id="saldo-pagado" type="number" inputMode="decimal" placeholder="0" value={saldoPagado} onChange={(e) => setSaldoPagado(e.target.value)} />
-                                </div>
-                                <div className="btn-pair">
-                                  <button className="btn-primary" onClick={() => guardarSaldo(false)} disabled={saldoMonto === ""}>Actualizar</button>
-                                  {capacidad.saldo && <button className="btn-ghost" onClick={() => guardarSaldo(true)}>Usar la estimación</button>}
-                                </div>
-                                {saldoStatus && <StatusMsg texto={saldoStatus} />}
                               </div>
 
                               <p className="cobro-nota muted">
                                 {capacidad.modo === "saldo"
-                                  ? `Calculado con lo que cargaste el ${fechaCortaISO(capacidad.saldo.fecha)}. Si gastaste algo que no está en la planilla, volvé a actualizarlo.`
+                                  ? `Calculado con lo que cargaste el ${fechaCortaISO(capacidad.saldo.fecha)}. Si gastaste algo que no está en la planilla, volvé a calcular.`
                                   : capacidad.saldoVencido
-                                    ? "Lo que cargaste es de un período anterior: ya cobraste de nuevo, así que se usa la estimación. Cargá lo que tenés hoy para afinarla."
-                                    : "Estimación con lo cargado en la planilla: no conoce el saldo de tu cuenta. Cargá lo que tenés hoy para afinarla."}
+                                    ? "Lo que cargaste es de un período anterior: ya cobraste de nuevo, así que se usa la estimación. Respondé las tres preguntas para afinarla."
+                                    : "Por ahora es una estimación con lo cargado en la planilla: no conoce el saldo de tu cuenta."}
                                 {" "}El sueldo del último día hábil de cada mes paga el mes siguiente.
                               </p>
                             </div>

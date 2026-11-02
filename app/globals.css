@@ -1183,7 +1183,18 @@ button:active:not(:disabled) {
 .cobro-deficit { color: var(--danger); font-weight: 600; margin: 14px 0 4px; }
 .cobro-cuenta { display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; margin: 12px 0; color: var(--text-muted); }
 .cobro-cuenta strong { color: var(--text); font-family: var(--mono); }
-.cobro-form { display: grid; gap: 10px; margin-top: 14px; }
-.cobro-form .btn-pair button { margin-top: 4px; }
 .cobro-nota { font-size: 12px; margin: 12px 0 0; }
 @media (prefers-reduced-motion: reduce) { .cobro-chevron { transition: none; } }
+
+.cobro-intro { margin: 14px 0 4px; }
+.cobro-paso { display: grid; gap: 6px; margin: 14px 0 0; padding: 0; border: 0; min-width: 0; }
+.cobro-paso legend, .cobro-paso > label { font-weight: 700; font-size: 14px; padding: 0; margin-bottom: 4px; }
+.cobro-paso small { font-size: 12px; }
+.cobro-check { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; cursor: pointer; min-height: 44px; font-weight: 500; font-size: 14px; }
+.cobro-check input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--accent); }
+.cobro-check span { flex: 1; min-width: 0; }
+.cobro-check strong { font-family: var(--mono); font-size: 13.5px; }
+.cobro-check:has(input:checked) { background: var(--green-soft); border-color: transparent; }
+.cobro-card .btn-pair { margin-top: 12px; }
+.cobro-card .btn-pair button { margin-top: 0; }
+.cobro-resultado { margin-top: 16px; padding-top: 4px; border-top: 1px solid var(--border); }
