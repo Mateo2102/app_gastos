@@ -40,3 +40,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# credenciales y secretos locales (nunca al repositorio)
+CLIENTE SECRET*
+client_secret*.json
+*service-account*.json
