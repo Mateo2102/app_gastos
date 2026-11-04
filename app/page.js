@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
 import { fechaCierreDia, fechaAplicacion, describirPago } from "@/lib/closing";
-import { resumenPatrimonio, LUGARES } from "@/lib/patrimonio";
+import { resumenPatrimonio, acumuladoConIol, LUGARES } from "@/lib/patrimonio";
 
 const MESES_NOMBRE = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -633,11 +633,15 @@ export default function Home() {
   const graficosSerie = useMemo(() => {
     if (!graficos) return null;
     let accProy = 0, accReal = 0;
-    const filas = graficos.meses.map((m) => {
+    const manuales = graficos.meses.map((m) => {
       accProy += m.ahorroProyectado;
       if (m.ahorroReal !== null) accReal += m.ahorroReal;
       return { ...m, accProy, accReal: m.ahorroReal === null ? null : accReal };
     });
+    // El acumulado real suma el valor total de la cartera de IOL (en pesos) al cierre de cada mes, desde que se conectó.
+    const iolFotos = iol && iol.configurado && !iol.error ? iol.fotos : null;
+    const filas = acumuladoConIol(manuales, iolFotos, dolarBlue || 0);
+    const primeraFoto = iolFotos ? Object.keys(iolFotos).sort()[0] : null;
     const hechos = filas.filter((m) => m.estado !== "futuro");
     const real = hechos.reduce((acc, m) => acc + (m.ahorroReal || 0), 0);
     const plan = hechos.reduce((acc, m) => acc + m.ahorroProyectado, 0);
@@ -646,9 +650,10 @@ export default function Home() {
       filas, real, plan, dif: real - plan,
       desde: filas[0] ? filas[0].label : "", hasta: hechos.length ? hechos[hechos.length - 1].label : "",
       indiceHoy: filas.findIndex((m) => m.estado === "actual"),
+      hayIol: filas.some((m) => m.iol !== null), iolDesde: primeraFoto,
       aproxHasta: aprox.length ? aprox[aprox.length - 1].label : ""
     };
-  }, [graficos]);
+  }, [graficos, iol, dolarBlue]);
 
   useEffect(() => {
     if (!canvasRef.current || tab !== "graficos" || graficosVista !== "proyeccion") return;
@@ -1350,14 +1355,15 @@ export default function Home() {
 
   // ---- Sección "Gráficos": todo en líneas. Punteada = proyectado, sólida = real, marca vertical = hoy ----
   // Opciones de un gráfico mensual: marca de "hoy" y, al pasar el mouse, qué tan firme es lo proyectado de ese mes.
-  const opcionesMensual = (serie, formato) => {
+  const opcionesMensual = (serie, formato, extra = null) => {
     const o = opcionesChart(formato);
     o.plugins.lineaHoy = { index: serie.indiceHoy };
     o.plugins.tooltip.callbacks.afterBody = (items) => {
       const m = items.length ? serie.filas[items[0].dataIndex] : null;
       if (!m) return "";
-      if (m.aprox) return "Proyectado aproximado: ese mes no tenía foto";
-      return m.fijo ? "Proyectado fijo desde que arrancó el mes" : "Proyección de hoy: cambia con lo que cargues";
+      const estado = m.aprox ? "Proyectado aproximado: ese mes no tenía foto"
+        : (m.fijo ? "Proyectado fijo desde que arrancó el mes" : "Proyección de hoy: cambia con lo que cargues");
+      return [estado, extra ? extra(m) : ""].filter(Boolean);
     };
     return o;
   };
@@ -1367,14 +1373,16 @@ export default function Home() {
     const f = graficosSerie.filas;
     const etiquetas = f.map((m) => m.label);
     const charts = [];
-    const nuevo = (canvas, real, proy) => canvas && charts.push(new Chart(canvas.getContext("2d"), {
+    const nuevo = (canvas, real, proy, etiqueta = "Real", extra = null) => canvas && charts.push(new Chart(canvas.getContext("2d"), {
       type: "line",
-      data: { labels: etiquetas, datasets: [lineaProy("Proyectado", proy, PAL.ahorro), lineaReal("Real", real, PAL.ahorro)] },
-      options: opcionesMensual(graficosSerie),
+      data: { labels: etiquetas, datasets: [lineaProy("Proyectado", proy, PAL.ahorro), lineaReal(etiqueta, real, PAL.ahorro)] },
+      options: opcionesMensual(graficosSerie, undefined, extra),
       plugins: [pluginHoy]
     }));
     nuevo(ahorroMesRef.current, f.map((m) => m.ahorroReal), f.map((m) => m.ahorroProyectado));
-    nuevo(ahorroAcumRef.current, f.map((m) => m.accReal), f.map((m) => m.accProy));
+    // El acumulado real incluye el valor total de la cartera de IOL en pesos (los dólares, al blue de hoy).
+    nuevo(ahorroAcumRef.current, f.map((m) => m.accRealTotal), f.map((m) => m.accProy), graficosSerie.hayIol ? "Real (con IOL)" : "Real",
+      (m) => (m.iol !== null && m.iol !== undefined ? `Incluye IOL: ${fmt(m.iol)}` : ""));
     return () => charts.forEach((c) => c.destroy());
   }, [graficosSerie, tab, graficosVista]);
 
@@ -1485,7 +1493,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    if (iol !== null || !(tab === "ahorro" || (tab === "graficos" && graficosVista === "cartera"))) return;
+    if (iol !== null || !(tab === "ahorro" || (tab === "graficos" && (graficosVista === "cartera" || graficosVista === "ahorro")))) return;
     cargarIol();
   }, [tab, graficosVista, iol]);
 
@@ -2370,6 +2378,11 @@ export default function Home() {
                     <section className="card">
                       <div className="card-head"><h2>Ahorro acumulado</h2></div>
                       <div className="chart-box"><canvas ref={ahorroAcumRef}></canvas></div>
+                      {graficosSerie.hayIol && (
+                        <p className="hint grafico-nota">
+                          El real incluye el valor total de tu cartera de IOL en pesos, con los dólares al blue de hoy ({fmt(dolarBlue || 0)}), desde que la conectaste el {fechaLarga(graficosSerie.iolDesde)}. Antes de esa fecha no hay historia de IOL, por eso la línea sube de golpe ese mes.
+                        </p>
+                      )}
                     </section>
 
                     {tenencia.filas.some((f) => f.moneda !== "USD") && (
