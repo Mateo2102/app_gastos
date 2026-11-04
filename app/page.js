@@ -643,7 +643,7 @@ export default function Home() {
     const filas = acumuladoConIol(manuales, iolFotos, dolarBlue || 0);
     const primeraFoto = iolFotos ? Object.keys(iolFotos).sort()[0] : null;
     const hechos = filas.filter((m) => m.estado !== "futuro");
-    const real = hechos.reduce((acc, m) => acc + (m.ahorroReal || 0), 0);
+    const real = hechos.reduce((acc, m) => acc + (m.ahorroRealTotal || 0), 0); // a mano + lo que cambió IOL
     const plan = hechos.reduce((acc, m) => acc + m.ahorroProyectado, 0);
     const aprox = filas.filter((m) => m.aprox);
     return {
@@ -1379,7 +1379,9 @@ export default function Home() {
       options: opcionesMensual(graficosSerie, undefined, extra),
       plugins: [pluginHoy]
     }));
-    nuevo(ahorroMesRef.current, f.map((m) => m.ahorroReal), f.map((m) => m.ahorroProyectado));
+    // El mes real suma lo cargado a mano y lo que cambió la cartera de IOL ese mes (el primer mes, la cartera completa).
+    nuevo(ahorroMesRef.current, f.map((m) => m.ahorroRealTotal), f.map((m) => m.ahorroProyectado), graficosSerie.hayIol ? "Real (con IOL)" : "Real",
+      (m) => (m.iolMes !== null && m.iolMes !== undefined ? `Incluye IOL: ${m.iolMes < 0 ? "-" : "+"}${fmt(Math.abs(m.iolMes))} (cambio de la cartera en el mes)` : ""));
     // El acumulado real incluye el valor total de la cartera de IOL en pesos (los dólares, al blue de hoy).
     nuevo(ahorroAcumRef.current, f.map((m) => m.accRealTotal), f.map((m) => m.accProy), graficosSerie.hayIol ? "Real (con IOL)" : "Real",
       (m) => (m.iol !== null && m.iol !== undefined ? `Incluye IOL: ${fmt(m.iol)}` : ""));
@@ -2355,7 +2357,7 @@ export default function Home() {
                       <section className="card">
                         <div className="stat-tile-label">Ahorrado de verdad</div>
                         <div className="stat-tile-value">{fmt(graficosSerie.real)}</div>
-                        <div className="stat-tile-sub">de {graficosSerie.desde} a {graficosSerie.hasta}</div>
+                        <div className="stat-tile-sub">de {graficosSerie.desde} a {graficosSerie.hasta}{graficosSerie.hayIol ? " · incluye IOL" : ""}</div>
                       </section>
                       <section className="card">
                         <div className="stat-tile-label">Lo proyectado</div>
@@ -2372,7 +2374,11 @@ export default function Home() {
                     <section className="card">
                       <div className="card-head"><h2>Ahorro por mes: proyectado contra real</h2></div>
                       <div className="chart-box"><canvas ref={ahorroMesRef}></canvas></div>
-                      <p className="hint grafico-nota">Lo proyectado es lo que queda de los ingresos después de los gastos y el piso. Lo real es lo que cargaste en Ahorro ese mes. Los meses que vienen solo tienen proyección.</p>
+                      <p className="hint grafico-nota">
+                        Lo proyectado es lo que queda de los ingresos después de los gastos y el piso. Lo real es lo que cargaste en Ahorro ese mes
+                        {graficosSerie.hayIol ? ", más lo que cambió tu cartera de IOL en el mes (lo que depositaste más lo que ganó o perdió en el mercado: IOL no lo separa). En el mes en que se conectó IOL cuenta la cartera completa" : ""}.
+                        Los meses que vienen solo tienen proyección.
+                      </p>
                     </section>
 
                     <section className="card">
