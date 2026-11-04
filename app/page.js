@@ -1767,6 +1767,7 @@ export default function Home() {
                                     <>
                                       <span>Tenés <strong>{fmt(capacidad.saldo.monto)}</strong></span>
                                       <span>− Te falta pagar <strong>{fmt(capacidad.pendiente)}</strong>{capacidad.pagado > 0 ? ` (ya pagaste ${fmt(capacidad.pagado)})` : ""}</span>
+                                      {capacidad.gastado > 0 && <span>− Gastaste después de cargar lo que tenés <strong>{fmt(capacidad.gastado)}</strong></span>}
                                       {capacidad.ahorrado > 0 && <span>− Ahorrado después de calcular esto <strong>{fmt(capacidad.ahorrado)}</strong></span>}
                                       <span>= Podés gastar <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
                                     </>
@@ -1783,7 +1784,7 @@ export default function Home() {
 
                               <p className="cobro-nota muted">
                                 {capacidad.modo === "saldo"
-                                  ? `Calculado con lo que cargaste el ${fechaCortaISO(capacidad.saldo.fecha)}. Si gastaste algo que no está en la planilla, volvé a calcular.`
+                                  ? `Calculado con lo que cargaste el ${fechaCortaISO(capacidad.saldo.fecha)}. Los pagos únicos en transferencia o efectivo que cargues después se descuentan solos; si gastaste algo que no anotaste, volvé a calcular.`
                                   : capacidad.saldoVencido
                                     ? "Lo que cargaste es de un período anterior: ya cobraste de nuevo, así que se usa la estimación. Respondé las tres preguntas para afinarla."
                                     : "Por ahora es una estimación con lo cargado en la planilla: no conoce el saldo de tu cuenta."}
