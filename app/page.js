@@ -30,7 +30,7 @@ const FORMA_TARJETA = "Tarjeta de Crédito";
 
 // Paleta de los gráficos y las barras (tonos afines a los tokens de globals.css; el canvas no lee CSS).
 const PAL = {
-  gasto: "#d6402b", gastoSuave: "#efb6ab", ingreso: "#9fd6b8", ahorro: "#0a7040", piso: "#8a8576",
+  gasto: "#d6402b", contado: "#8a5cc2", gastoSuave: "#efb6ab", ingreso: "#9fd6b8", ahorro: "#0a7040", piso: "#8a8576",
   libre: "#c9c1ae", variable: "#d98a12", cuota: "#2b44d6", grid: "#e6e0d3", texto: "#5a554a", ingresoLinea: "#2f8f62"
 };
 Chart.defaults.color = PAL.texto;
@@ -369,6 +369,9 @@ export default function Home() {
   const [mesesBase, setMesesBase] = useState([]);
   const [capacidad, setCapacidad] = useState(null); // cuánto se puede gastar hasta el próximo cobro
   const [cobroAbierto, setCobroAbierto] = useState(false);
+  const [reservaForm, setReservaForm] = useState({ activa: false, tipo: "porcentaje", valor: "" }); // reserva automática de MercadoPago
+  const [reservaVigente, setReservaVigente] = useState(null);
+  const [reservaStatus, setReservaStatus] = useState("");
   const [graficos, setGraficos] = useState(null); // evolutivo contra proyectado (se pide al abrir Gráficos)
   const [graficosVista, setGraficosVista] = useState("ahorro");
   const [iol, setIol] = useState(null); // cartera de IOL (solo lectura); { configurado, cartera, fotos } o { error }
@@ -378,6 +381,10 @@ export default function Home() {
   const [saldoMonto, setSaldoMonto] = useState(""); // lo que tengo hoy
   const [saldoPagados, setSaldoPagados] = useState([]); // ids de lo comprometido que ya pagué (tildes)
   const [saldoAhorrado, setSaldoAhorrado] = useState(""); // lo ahorrado desde el último cobro
+  // Guardado automático de "Hasta cobrar": espejo de lo escrito (para el temporizador) y la pausa antes de guardar.
+  const estadoSaldo = useRef({ monto: "", pagados: [], ahorrado: "" });
+  const temporizadorSaldo = useRef(null);
+  const horaPendiente = useRef(false);
   const [saldoStatus, setSaldoStatus] = useState("");
   const [hoyKey, setHoyKey] = useState(""); // "YYYY-M" del mes en curso (según el servidor)
   const [porCuenta, setPorCuenta] = useState(null);
@@ -429,7 +436,8 @@ export default function Home() {
   const [cuotasMes, setCuotasMes] = useState(null);
 
   // Pestaña "Gastos": mes elegido y cuotas de ese mes (los gastos fijos se suman aparte).
-  const [gastosMesFiltro, setGastosMesFiltro] = useState({ month: mesObjetivo.month, year: mesObjetivo.year });
+  // Gastos abre en el mes en curso: cada gasto cuenta en el mes en que está anotado.
+  const [gastosMesFiltro, setGastosMesFiltro] = useState({ month: hoy.getMonth(), year: hoy.getFullYear() });
   const [gastosHist, setGastosHist] = useState(null);
   const [gastosCat, setGastosCat] = useState("");
   const [gastosVista, setGastosVista] = useState("detalle");
@@ -469,7 +477,7 @@ export default function Home() {
     if (payload.porCuenta) setPorCuenta(payload.porCuenta);
     if (payload.capacidad !== undefined) {
       setCapacidad(payload.capacidad);
-      setSaldoAhorrado(payload.capacidad && payload.capacidad.ahorradoPeriodo > 0 ? String(Math.round(payload.capacidad.ahorradoPeriodo)) : "");
+      if (!opts.conservarSaldo) setSaldoAhorrado(payload.capacidad && payload.capacidad.ahorradoPeriodo > 0 ? String(Math.round(payload.capacidad.ahorradoPeriodo)) : "");
     }
     if (payload.hoy) setHoyKey(payload.hoy);
     if (payload.config) {
@@ -478,8 +486,13 @@ export default function Home() {
       setAhorroMovs(payload.config.ahorroMovs || []);
       if (payload.config.cierreDias) setCierreDias(payload.config.cierreDias);
       const sa = payload.config.saldoActual;
-      setSaldoMonto(sa ? String(sa.monto) : "");
-      setSaldoPagados(sa && Array.isArray(sa.pagados) ? sa.pagados : []);
+      if (!opts.conservarSaldo) {
+        setSaldoMonto(sa ? String(sa.monto) : "");
+        setSaldoPagados(sa && Array.isArray(sa.pagados) ? sa.pagados : []);
+      }
+      const rm = payload.config.reservaMP;
+      setReservaVigente(rm || null);
+      setReservaForm(rm ? { activa: rm.activa, tipo: rm.tipo, valor: String(rm.valor) } : { activa: false, tipo: "porcentaje", valor: "" });
     }
     if (payload.dolarBlue) setDolarBlue(payload.dolarBlue);
     else setDolarBlue(0);
@@ -912,24 +925,62 @@ export default function Home() {
   }
 
   // Cierre del período: qué ya pagué (tildes), cuánto tengo y cuánto ahorré (se carga solo en Ahorro).
-  function alternarPagado(id) {
-    setSaldoPagados((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
+  // Reserva automática: por cada gasto al contado en MercadoPago por transferencia se aparta un % o un monto fijo.
+  async function guardarReserva() {
+    setReservaStatus("Guardando...");
+    try {
+      const res = await fetchJSON("/api/reserva", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(reservaForm)
+      });
+      render(res, { onlyBase: true });
+      setReservaStatus(reservaForm.activa ? "✅ Reserva activada" : "✅ Reserva apagada");
+    } catch (e) {
+      setReservaStatus("❌ " + e.message);
+    }
   }
 
-  async function guardarSaldo(borrar = false) {
-    setSaldoStatus("Guardando...");
+  function alternarPagado(id) {
+    setSaldoPagados((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
+    programarSaldo(false);
+  }
+
+  // Guarda lo escrito y recalcula. `hora: false` = solo cambió un tilde o el ahorro: la hora de "lo que tengo" no se renueva.
+  async function guardarSaldo(borrar = false, { hora = true } = {}) {
+    const e = estadoSaldo.current;
+    setSaldoStatus("Calculando...");
     try {
       const res = await fetchJSON("/api/saldo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(borrar ? { monto: "" } : { monto: saldoMonto, pagados: saldoPagados, ahorrado: saldoAhorrado })
+        body: JSON.stringify(borrar ? { monto: "" } : { monto: e.monto, pagados: e.pagados, ahorrado: e.ahorrado, actualizarHora: hora })
       });
-      render(res, { onlyBase: true });
-      setSaldoStatus(borrar ? "Listo: vuelve a la estimación." : "✅ Actualizado");
-    } catch (e) {
-      setSaldoStatus("❌ " + e.message);
+      // Si se sigue escribiendo, la respuesta no pisa lo que hay en los campos.
+      render(res, { onlyBase: true, conservarSaldo: !borrar });
+      setSaldoStatus(borrar ? "Listo: vuelve a la estimación." : "✅ Calculado");
+    } catch (err) {
+      setSaldoStatus("❌ " + err.message);
     }
   }
+
+  // El cálculo es automático: al escribir o tildar se espera una pausa corta y se guarda solo.
+  function programarSaldo(cambiaMonto) {
+    if (cambiaMonto) horaPendiente.current = true;
+    clearTimeout(temporizadorSaldo.current);
+    if (estadoSaldo.current.monto === "" && !cambiaMonto) setSaldoStatus("Poné cuánto tenés hoy y se calcula solo.");
+    temporizadorSaldo.current = setTimeout(() => {
+      const hora = horaPendiente.current;
+      horaPendiente.current = false;
+      if (estadoSaldo.current.monto === "") return; // sin "lo que tengo" no hay con qué calcular
+      guardarSaldo(false, { hora });
+    }, 900);
+  }
+
+  useEffect(() => {
+    estadoSaldo.current = { monto: saldoMonto, pagados: saldoPagados, ahorrado: saldoAhorrado };
+  });
+  useEffect(() => () => clearTimeout(temporizadorSaldo.current), []);
 
   function irATarjeta(nombre) {
     setTarjetaActiva(nombre);
@@ -1205,10 +1256,10 @@ export default function Home() {
     const prevItems = hayPrev ? gastosHist[idx - 1].items : null;
     const prev = hayPrev ? suma(prevItems) : null;
 
-    // fijo / variable (pago único) / cuotas (más de una cuota)
-    const clase = (g) => (g.detalle === "Fijo" ? "fijo" : (Number(g.cuotasTotales) > 1 ? "cuotas" : "variable"));
+    // fijo / contado (un pago en transferencia o efectivo: el día a día) / variable (un pago con tarjeta u otro medio) / cuotas
+    const clase = (g) => (g.detalle === "Fijo" ? "fijo" : (Number(g.cuotasTotales) > 1 ? "cuotas" : (g.alContado ? "contado" : "variable")));
     const porClase = (items) => {
-      const r = { fijo: 0, variable: 0, cuotas: 0 };
+      const r = { fijo: 0, contado: 0, variable: 0, cuotas: 0 };
       items.forEach((g) => { r[clase(g)] += Number(g.montoARS) || 0; });
       return r;
     };
@@ -1720,7 +1771,7 @@ export default function Home() {
                           </button>
                           {cobroAbierto && (
                             <div id="cobro-panel" className="cobro-panel">
-                              <p className="cobro-intro muted">Respondé tres cosas y te digo cuánto podés gastar por día hasta cobrar el {fechaCortaISO(capacidad.hasta)}.</p>
+                              <p className="cobro-intro muted">Completá estos tres datos y se calcula solo cuánto podés gastar por día hasta cobrar el {fechaCortaISO(capacidad.hasta)}.</p>
 
                               <fieldset className="cobro-paso">
                                 <legend>1. ¿Qué ya pagaste de {labelTramo(capacidad.mesKey)}?</legend>
@@ -1737,19 +1788,18 @@ export default function Home() {
 
                               <div className="cobro-paso">
                                 <label htmlFor="saldo-monto">2. ¿Cuánto tenés hoy en tu cuenta?</label>
-                                <input id="saldo-monto" type="number" inputMode="decimal" placeholder="Ej.: 650000" value={saldoMonto} onChange={(e) => setSaldoMonto(e.target.value)} />
+                                <input id="saldo-monto" type="number" inputMode="decimal" placeholder="Ej.: 650000" value={saldoMonto} onChange={(e) => { setSaldoMonto(e.target.value); programarSaldo(true); }} />
                               </div>
 
                               <div className="cobro-paso">
                                 <label htmlFor="saldo-ahorrado">3. ¿Cuánto ahorraste desde que cobraste?</label>
-                                <input id="saldo-ahorrado" type="number" inputMode="decimal" placeholder="0" value={saldoAhorrado} onChange={(e) => setSaldoAhorrado(e.target.value)} />
+                                <input id="saldo-ahorrado" type="number" inputMode="decimal" placeholder="0" value={saldoAhorrado} onChange={(e) => { setSaldoAhorrado(e.target.value); programarSaldo(false); }} />
                                 <small className="muted">Se carga solo en la pestaña Ahorro. Es el total del período, no lo que sumás hoy.</small>
                               </div>
 
-                              <div className="btn-pair">
-                                <button className="btn-primary" onClick={() => guardarSaldo(false)} disabled={saldoMonto === ""}>Calcular</button>
-                                {capacidad.saldo && <button className="btn-ghost" onClick={() => guardarSaldo(true)}>Usar la estimación</button>}
-                              </div>
+                              {capacidad.saldo && (
+                                <button className="btn-ghost" style={{ marginTop: 8 }} onClick={() => guardarSaldo(true)}>Usar la estimación</button>
+                              )}
                               {saldoStatus && <StatusMsg texto={saldoStatus} />}
 
                               <div className="cobro-resultado">
@@ -1768,6 +1818,7 @@ export default function Home() {
                                       <span>Tenés <strong>{fmt(capacidad.saldo.monto)}</strong></span>
                                       <span>− Te falta pagar <strong>{fmt(capacidad.pendiente)}</strong>{capacidad.pagado > 0 ? ` (ya pagaste ${fmt(capacidad.pagado)})` : ""}</span>
                                       {capacidad.gastado > 0 && <span>− Gastaste después de cargar lo que tenés <strong>{fmt(capacidad.gastado)}</strong></span>}
+                                      {capacidad.reservado > 0 && <span>− Reservado en MercadoPago <strong>{fmt(capacidad.reservado)}</strong></span>}
                                       {capacidad.ahorrado > 0 && <span>− Ahorrado después de calcular esto <strong>{fmt(capacidad.ahorrado)}</strong></span>}
                                       <span>= Podés gastar <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
                                     </>
@@ -1776,11 +1827,41 @@ export default function Home() {
                                       <span>Ingresos de {labelTramo(capacidad.mesKey)} <strong>{fmt(capacidad.ingresos)}</strong></span>
                                       <span>− Comprometido <strong>{fmt(capacidad.comprometido)}</strong></span>
                                       {capacidad.ahorrado > 0 && <span>− Ahorrado desde el último cobro <strong>{fmt(capacidad.ahorrado)}</strong></span>}
+                                      {capacidad.reservado > 0 && <span>− Reservado en MercadoPago <strong>{fmt(capacidad.reservado)}</strong></span>}
                                       <span>= Podés gastar <strong>{fmt(capacidad.libre)}</strong> en {capacidad.diasRestantes} {capacidad.diasRestantes === 1 ? "día" : "días"}</span>
                                     </>
                                   )}
                                 </div>
                               </div>
+
+                              <details className="cierre-details">
+                                <summary>Reserva automática de MercadoPago{reservaVigente && reservaVigente.activa ? " · activa" : ""}</summary>
+                                <p className="hint" style={{ margin: "8px 0" }}>
+                                  Por cada gasto al contado en MercadoPago por transferencia se aparta plata: sigue siendo tuya, pero se descuenta de lo que podés gastar. Vale desde que la activás.
+                                </p>
+                                <label className="cobro-check">
+                                  <input type="checkbox" checked={reservaForm.activa} onChange={(e) => setReservaForm({ ...reservaForm, activa: e.target.checked })} />
+                                  <span>Activar la reserva</span>
+                                </label>
+                                <div className="field-row" style={{ marginTop: 10 }}>
+                                  <div className="field">
+                                    <label htmlFor="reserva-tipo">Cómo se calcula</label>
+                                    <select id="reserva-tipo" value={reservaForm.tipo} onChange={(e) => setReservaForm({ ...reservaForm, tipo: e.target.value })}>
+                                      <option value="porcentaje">Un porcentaje del gasto</option>
+                                      <option value="fijo">Un monto fijo por gasto</option>
+                                    </select>
+                                  </div>
+                                  <div className="field">
+                                    <label htmlFor="reserva-valor">{reservaForm.tipo === "porcentaje" ? "Porcentaje (%)" : "Monto por gasto ($)"}</label>
+                                    <input id="reserva-valor" type="number" inputMode="decimal" placeholder={reservaForm.tipo === "porcentaje" ? "Ej.: 2" : "Ej.: 100"} value={reservaForm.valor} onChange={(e) => setReservaForm({ ...reservaForm, valor: e.target.value })} />
+                                  </div>
+                                </div>
+                                <button className="btn-primary" onClick={guardarReserva} disabled={reservaForm.valor === ""}>Guardar</button>
+                                {reservaStatus && <StatusMsg texto={reservaStatus} />}
+                                {reservaVigente && reservaVigente.activa && reservaVigente.desde && (
+                                  <p className="hint" style={{ margin: "8px 0 0" }}>Rige desde el {fechaLarga(reservaVigente.desde)}: cuenta lo que cargues a partir de ahí.</p>
+                                )}
+                              </details>
 
                               <p className="cobro-nota muted">
                                 {capacidad.modo === "saldo"
@@ -2037,6 +2118,7 @@ export default function Home() {
                       </div>
                       <div className="hero-kpi-side">
                         <div><span className="muted">Gastos fijos</span> <strong>{fmt(gastosKpis.cur.fijo)}</strong></div>
+                        <div><span className="muted">Día a día (al contado)</span> <strong>{fmt(gastosKpis.cur.contado)}</strong></div>
                         <div><span className="muted">Compras en cuotas</span> <strong>{fmt(gastosKpis.cur.cuotas)}</strong></div>
                         <div>
                           <span className="muted">Ingresos usados</span>{" "}
@@ -2066,11 +2148,11 @@ export default function Home() {
                   <section className="card">
                     <div className="card-head"><h2>Composición del gasto</h2></div>
                     <div className="comp-bar">
-                      {[["fijo", PAL.gasto], ["variable", PAL.variable], ["cuotas", PAL.cuota]].map(([k, color]) => (
+                      {[["fijo", PAL.gasto], ["contado", PAL.contado], ["variable", PAL.variable], ["cuotas", PAL.cuota]].map(([k, color]) => (
                         <span key={k} style={{ width: `${gastosKpis.total ? (gastosKpis.cur[k] / gastosKpis.total) * 100 : 0}%`, background: color }}></span>
                       ))}
                     </div>
-                    {[["fijo", "Gastos fijos", PAL.gasto], ["variable", "Gastos variables (pago único)", PAL.variable], ["cuotas", "Compras en cuotas", PAL.cuota]].map(([k, nombre, color]) => (
+                    {[["fijo", "Gastos fijos", PAL.gasto], ["contado", "Día a día (al contado)", PAL.contado], ["variable", "Un pago (tarjeta u otro medio)", PAL.variable], ["cuotas", "Compras en cuotas", PAL.cuota]].map(([k, nombre, color]) => (
                       <div className="comp-row" key={k}>
                         <span className="comp-dot" style={{ background: color }}></span>
                         <span className="comp-name">{nombre}</span>
@@ -2096,7 +2178,9 @@ export default function Home() {
                           <div className="cat-item-medio">{g.categoria} · {g.medio}</div>
                           {g.detalle === "Fijo"
                             ? <span className="badge badge-neutral">Fijo</span>
-                            : Number(g.cuotasTotales) > 1 && <span className="badge badge-info">{g.cuotaNumero}/{g.cuotasTotales} cuotas</span>}
+                            : (Number(g.cuotasTotales) > 1
+                              ? <span className="badge badge-info">{g.cuotaNumero}/{g.cuotasTotales} cuotas</span>
+                              : (g.alContado && <span className="badge badge-contado">Al contado</span>))}
                         </div>
                         <div className="cat-item-monto strong">{fmt(g.montoARS)}</div>
                       </div>
@@ -2147,7 +2231,7 @@ export default function Home() {
                               <div className="cat-item-left">
                                 <span className="strong">{g.desc}</span>
                                 <span className="cat-item-medio">{g.medio}</span>
-                                <span className={`badge ${g.detalle === "Fijo" ? "badge-neutral" : "badge-info"}`}>{g.detalle}</span>
+                                <span className={`badge ${g.detalle === "Fijo" ? "badge-neutral" : (g.alContado ? "badge-contado" : "badge-info")}`}>{g.detalle}</span>
                               </div>
                               <div className="cat-item-monto">{celdaEquivalencia(g.moneda, g.montoARS, g.montoUSD)}</div>
                             </div>

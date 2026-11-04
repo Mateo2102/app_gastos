@@ -10,7 +10,7 @@ export const POST = protegido(async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
     await guardarSaldo(
-      { monto: body.monto, pagados: body.pagados, ahorrado: body.ahorrado },
+      { monto: body.monto, pagados: body.pagados, ahorrado: body.ahorrado, actualizarHora: body.actualizarHora !== false },
       { dolarBlue: await getDolarBlue() }
     );
     const data = await getDashboardData();
