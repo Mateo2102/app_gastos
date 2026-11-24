@@ -2747,7 +2747,7 @@ export default function Home() {
                 Cargá desde qué mes rige cada sueldo. El último que cargues es el piso de ahí en adelante:
                 reemplaza a los tramos que ya hubiera en meses posteriores. El sueldo que cobrás a fin de mes
                 paga el mes siguiente (el del 30/11 es el de diciembre). El tablero usa el tramo vigente en cada
-                mes de la proyección, y el aguinaldo (medio sueldo) se suma solo en junio y diciembre.
+                mes de la proyección, y el aguinaldo (la mitad del mejor sueldo del semestre) se suma solo.
               </p>
 
               {sueldoSchedule.length > 0 && (
