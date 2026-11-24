@@ -2744,9 +2744,10 @@ export default function Home() {
                 <h2>Evolución del sueldo</h2>
               </div>
               <p className="hint" style={{ margin: "0 0 16px" }}>
-                Cargá desde qué mes rige cada sueldo — por ejemplo, &ldquo;desde septiembre $X&rdquo; y &ldquo;desde
-                diciembre $Y&rdquo; para un aumento ya sabido. El tablero usa el tramo vigente en cada mes de la
-                proyección, y el aguinaldo (medio sueldo) se suma solo en junio y diciembre.
+                Cargá desde qué mes rige cada sueldo. El último que cargues es el piso de ahí en adelante:
+                reemplaza a los tramos que ya hubiera en meses posteriores. El sueldo que cobrás a fin de mes
+                paga el mes siguiente (el del 30/11 es el de diciembre). El tablero usa el tramo vigente en cada
+                mes de la proyección, y el aguinaldo (medio sueldo) se suma solo en junio y diciembre.
               </p>
 
               {sueldoSchedule.length > 0 && (
