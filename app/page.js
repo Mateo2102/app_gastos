@@ -2284,7 +2284,7 @@ export default function Home() {
           <div className="stack">
             <section className="card">
               <div className="card-head"><h2>Anotá lo que cobraste</h2></div>
-              <p className="hint" style={{ margin: "0 0 12px" }}>Es solo un registro de lo que de verdad cobraste: no cambia la proyección. El aguinaldo y cualquier otro ingreso aparte va como extra.</p>
+              <p className="hint" style={{ margin: "0 0 12px" }}>Registro de lo que de verdad cobraste. El último sueldo anotado es el de la proyección desde el mes siguiente (el del 30/11 es el de diciembre). El aguinaldo y cualquier otro ingreso aparte va como extra.</p>
               <div className="pago-fields">
                 <div className="field-row">
                   <div className="field">
